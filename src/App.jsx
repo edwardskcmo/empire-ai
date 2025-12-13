@@ -13,14 +13,14 @@ import {
 } from 'lucide-react';
 
 const defaultDepartments = [
-  { id: 'company-wide', name: 'Company-Wide', icon: 'Building', color: '#64748B', description: 'Company-wide documents and policies' },
-  { id: 'marketing', name: 'Marketing & Lead Generation', icon: 'TrendingUp', color: '#10B981', description: 'Campaigns, leads, and brand management' },
-  { id: 'sales', name: 'Sales & Estimating', icon: 'DollarSign', color: '#F59E0B', description: 'Pipeline, proposals, and client relations' },
-  { id: 'production', name: 'Production & Project Management', icon: 'Wrench', color: '#3B82F6', description: 'Project execution and scheduling' },
-  { id: 'financial', name: 'Financial & Bookkeeping', icon: 'Calculator', color: '#8B5CF6', description: 'Budgets, invoices, and accounting' },
-  { id: 'hr', name: 'HR & Training', icon: 'Users', color: '#EC4899', description: 'Team, hiring, and culture' },
-  { id: 'safety', name: 'Safety & Compliance', icon: 'ShieldCheck', color: '#EF4444', description: 'Compliance, training, and protocols' },
-  { id: 'admin', name: 'Operations & Admin', icon: 'ClipboardCheck', color: '#06B6D4', description: 'Operations and documentation' },
+  { id: 'company-wide', name: 'Company-Wide', icon: 'Building', color: '#64748B', description: 'Company-wide documents and policies', instructions: '' },
+  { id: 'marketing', name: 'Marketing & Lead Generation', icon: 'TrendingUp', color: '#10B981', description: 'Campaigns, leads, and brand management', instructions: '' },
+  { id: 'sales', name: 'Sales & Estimating', icon: 'DollarSign', color: '#F59E0B', description: 'Pipeline, proposals, and client relations', instructions: '' },
+  { id: 'production', name: 'Production & Project Management', icon: 'Wrench', color: '#3B82F6', description: 'Project execution and scheduling', instructions: '' },
+  { id: 'financial', name: 'Financial & Bookkeeping', icon: 'Calculator', color: '#8B5CF6', description: 'Budgets, invoices, and accounting', instructions: '' },
+  { id: 'hr', name: 'HR & Training', icon: 'Users', color: '#EC4899', description: 'Team, hiring, and culture', instructions: '' },
+  { id: 'safety', name: 'Safety & Compliance', icon: 'ShieldCheck', color: '#EF4444', description: 'Compliance, training, and protocols', instructions: '' },
+  { id: 'admin', name: 'Operations & Admin', icon: 'ClipboardCheck', color: '#06B6D4', description: 'Operations and documentation', instructions: '' },
 ];
 
 const iconMap = { Building, Briefcase, TrendingUp, DollarSign, Wrench, Shield, Folder, Users, Calculator, GraduationCap, ShieldCheck, ClipboardCheck, Zap, FileText, Database, Brain, Sparkles, Tag, Archive };
@@ -82,7 +82,7 @@ export default function EmpireAI() {
   const [departments, setDepartments] = useState(() => storage.get('departments', defaultDepartments));
   const [showDeptModal, setShowDeptModal] = useState(false);
   const [editingDept, setEditingDept] = useState(null);
-  const [newDept, setNewDept] = useState({ name: '', icon: 'Building', color: '#3B82F6', description: '' });
+  const [newDept, setNewDept] = useState({ name: '', icon: 'Building', color: '#3B82F6', description: '', instructions: '' });
   const [draggingDeptId, setDraggingDeptId] = useState(null);
   const [deptCardMenu, setDeptCardMenu] = useState(null);
   const [viewingDeptDocs, setViewingDeptDocs] = useState(null);
@@ -137,6 +137,9 @@ export default function EmpireAI() {
   const [intelligenceIndex, setIntelligenceIndex] = useState(() => storage.get('intelligence', []));
   const [expandedFaqSection, setExpandedFaqSection] = useState('getting-started');
   const [expandedFaqItem, setExpandedFaqItem] = useState(null);
+  const [systemInstructions, setSystemInstructions] = useState(() => storage.get('systemInstructions', ''));
+  const [editingSystemInstructions, setEditingSystemInstructions] = useState(false);
+  const [tempSystemInstructions, setTempSystemInstructions] = useState('');
 
   useEffect(() => { storage.set('teamMembers', teamMembers); }, [teamMembers]);
   useEffect(() => { storage.set('pendingInvites', pendingInvites); }, [pendingInvites]);
@@ -147,6 +150,7 @@ export default function EmpireAI() {
   useEffect(() => { storage.set('departments', departments); }, [departments]);
   useEffect(() => { storage.set('issues', issues); }, [issues]);
   useEffect(() => { storage.set('issueColumns', issueColumns); }, [issueColumns]);
+  useEffect(() => { storage.set('systemInstructions', systemInstructions); }, [systemInstructions]);
 
   const roles = [
     { id: 'owner', name: 'Owner', description: 'Full access to everything', color: '#F59E0B' },
@@ -190,7 +194,7 @@ export default function EmpireAI() {
 
   const addActivity = (type, text, dept) => { const activity = { id: generateId(), type, text, dept, time: new Date().toISOString() }; setActivities(prev => [activity, ...prev].slice(0, 50)); };
 
-  // TEAM MANAGEMENT WITH INTELLIGENCE
+  // TEAM MANAGEMENT
   const sendInvite = () => {
     if (!newInvite.email.trim() || !newInvite.email.includes('@')) return;
     const invite = { id: generateId(), email: newInvite.email.trim().toLowerCase(), role: newInvite.role, departments: newInvite.departments, status: 'pending', sentAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString() };
@@ -228,13 +232,13 @@ export default function EmpireAI() {
     if (member) addToIntelligence({ sourceType: 'team_change', sourceId: memberId, title: `Department Access Updated: ${member.name}`, content: `${member.name}'s department access updated to: ${deptIds.length > 0 ? deptIds.join(', ') : 'All departments'}`, department: 'hr', tags: ['team', 'permission', 'department'], relevanceBoost: 1 });
   };
 
-  // DEPARTMENT MANAGEMENT WITH INTELLIGENCE
+  // DEPARTMENT MANAGEMENT
   const addDepartment = () => {
     if (!newDept.name.trim()) return;
-    const dept = { id: generateId(), name: newDept.name.trim(), icon: newDept.icon, color: newDept.color, description: newDept.description.trim() };
+    const dept = { id: generateId(), name: newDept.name.trim(), icon: newDept.icon, color: newDept.color, description: newDept.description.trim(), instructions: newDept.instructions.trim() };
     setDepartments(prev => [...prev, dept]); addActivity('insight', `New department created: ${dept.name}`, 'System');
     addToIntelligence({ sourceType: 'department_change', sourceId: dept.id, title: `New Department: ${dept.name}`, content: `Created new department "${dept.name}". Description: ${dept.description || 'None provided'}`, department: 'admin', tags: ['department', 'organization', 'new'], relevanceBoost: 3 });
-    setNewDept({ name: '', icon: 'Building', color: '#3B82F6', description: '' }); setShowDeptModal(false);
+    setNewDept({ name: '', icon: 'Building', color: '#3B82F6', description: '', instructions: '' }); setShowDeptModal(false);
   };
 
   const updateDepartment = (id, updates) => { setDepartments(prev => prev.map(dept => dept.id === id ? { ...dept, ...updates } : dept)); };
@@ -252,14 +256,14 @@ export default function EmpireAI() {
   const saveDepartmentEdit = () => {
     if (editingDept && newDept.name.trim()) {
       const oldName = editingDept.name;
-      updateDepartment(editingDept.id, { name: newDept.name.trim(), icon: newDept.icon, color: newDept.color, description: newDept.description.trim() });
+      updateDepartment(editingDept.id, { name: newDept.name.trim(), icon: newDept.icon, color: newDept.color, description: newDept.description.trim(), instructions: newDept.instructions.trim() });
       addActivity('insight', `Department updated: ${newDept.name}`, 'System');
       addToIntelligence({ sourceType: 'department_change', sourceId: editingDept.id, title: `Department Updated: ${newDept.name}`, content: `Updated department from "${oldName}" to "${newDept.name}". New description: ${newDept.description || 'None'}`, department: 'admin', tags: ['department', 'organization', 'updated'], relevanceBoost: 1 });
     }
-    setEditingDept(null); setNewDept({ name: '', icon: 'Building', color: '#3B82F6', description: '' }); setShowDeptModal(false);
+    setEditingDept(null); setNewDept({ name: '', icon: 'Building', color: '#3B82F6', description: '', instructions: '' }); setShowDeptModal(false);
   };
 
-  const openEditDeptModal = (dept) => { setEditingDept(dept); setNewDept({ name: dept.name, icon: dept.icon, color: dept.color, description: dept.description || '' }); setShowDeptModal(true); setDeptCardMenu(null); };
+  const openEditDeptModal = (dept) => { setEditingDept(dept); setNewDept({ name: dept.name, icon: dept.icon, color: dept.color, description: dept.description || '', instructions: dept.instructions || '' }); setShowDeptModal(true); setDeptCardMenu(null); };
   const getDocsCountForDept = (deptId) => knowledge.filter(k => k.department === deptId).length;
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [conversations, activeDept, isThinking]);
@@ -267,7 +271,7 @@ export default function EmpireAI() {
 
   const getCurrentConversation = () => { const key = activeDept || 'general'; return conversations[key] || []; };
 
-  // AI INTEGRATION WITH ENHANCED INTELLIGENCE
+  // AI INTEGRATION WITH CUSTOM INSTRUCTIONS
   const buildIntelligenceContext = (query, dept) => {
     const relevantContext = queryIntelligence(query, { department: dept, limit: 5, minScore: 2 });
     if (relevantContext.length === 0) return '';
@@ -288,8 +292,24 @@ export default function EmpireAI() {
     try {
       const deptInfo = activeDept ? departments.find(d => d.id === activeDept) : null;
       const deptName = deptInfo?.name || 'General'; const deptDescription = deptInfo?.description || 'General company operations';
+      const deptInstructions = deptInfo?.instructions || '';
       const intelligenceContext = buildIntelligenceContext(messageText, activeDept);
-      const systemPrompt = `You are Empire AI, the operational intelligence assistant for Empire Remodeling, a residential remodeling contractor.\n\nCurrent Department: ${deptName}\nDepartment Focus: ${deptDescription}\n\nYour role:\n- Help with ${deptName.toLowerCase()} questions and tasks\n- Provide actionable, practical advice for a remodeling business\n- Reference relevant company knowledge when available\n- Be concise but thorough\n- Use a professional but friendly tone\n${intelligenceContext}\n\nRemember: You're helping a busy contractor run their business better. Be direct and helpful.`;
+      
+      // Build system prompt with custom instructions
+      let systemPrompt = `You are Empire AI, the operational intelligence assistant for Empire Remodeling, a residential remodeling contractor.\n\nCurrent Department: ${deptName}\nDepartment Focus: ${deptDescription}`;
+      
+      // Add system-wide custom instructions if they exist
+      if (systemInstructions.trim()) {
+        systemPrompt += `\n\n=== SYSTEM-WIDE INSTRUCTIONS ===\n${systemInstructions.trim()}`;
+      }
+      
+      // Add department-specific instructions if they exist
+      if (deptInstructions.trim()) {
+        systemPrompt += `\n\n=== ${deptName.toUpperCase()} DEPARTMENT INSTRUCTIONS ===\n${deptInstructions.trim()}`;
+      }
+      
+      systemPrompt += `\n\nYour role:\n- Help with ${deptName.toLowerCase()} questions and tasks\n- Provide actionable, practical advice for a remodeling business\n- Reference relevant company knowledge when available\n- Be concise but thorough\n- Use a professional but friendly tone\n${intelligenceContext}\n\nRemember: You're helping a busy contractor run their business better. Be direct and helpful.`;
+      
       const response = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: messageText, systemPrompt, conversationHistory: getCurrentConversation().slice(-10).map(m => ({ role: m.role, content: m.content })) }) });
       if (!response.ok) throw new Error(`API error: ${response.status}`);
       const data = await response.json();
@@ -312,7 +332,7 @@ export default function EmpireAI() {
     return response;
   };
 
-  // KNOWLEDGE MANAGEMENT WITH INTELLIGENCE
+  // KNOWLEDGE MANAGEMENT
   const addKnowledgeItem = (item) => {
     const tags = extractTags(`${item.title} ${item.content}`);
     const newItem = { id: generateId(), ...item, tags: [...new Set([...(item.tags || []), ...tags])], createdAt: new Date().toISOString() };
@@ -340,7 +360,7 @@ export default function EmpireAI() {
     setNewInsight({ title: '', content: '', department: '' }); setShowInsightModal(false);
   };
 
-  // ISSUE MANAGEMENT WITH INTELLIGENCE
+  // ISSUE MANAGEMENT
   const addIssue = () => {
     if (!newIssue.title.trim()) return;
     const issue = { id: generateId(), ...newIssue, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
@@ -388,7 +408,7 @@ export default function EmpireAI() {
 
   const archivedCount = issues.filter(i => i.archived).length;
 
-  // VOICE MODE WITH INTELLIGENCE
+  // VOICE MODE
   const startVoiceSession = () => {
     setVoiceStatus('listening'); setVoiceTranscript(''); setVoiceResponse('');
     addToIntelligence({ sourceType: 'voice_session', sourceId: generateId(), title: 'Voice Session Started', content: `User initiated a voice interaction session in ${activeDept ? departments.find(d => d.id === activeDept)?.name : 'General'}`, department: activeDept || 'general', tags: ['voice', 'interaction'], relevanceBoost: 0 });
@@ -456,7 +476,8 @@ export default function EmpireAI() {
       { q: 'When will real voice be available?', a: 'Voice mode is planned for integration with Gemini Live API. The current demo shows the interface and flow that will be used.' }
     ]},
     { id: 'systems', title: 'Systems & Team Management', items: [
-      { q: 'What\'s on the Systems page?', a: 'System status cards, connected Google Sheets (coming soon), the Central Intelligence panel showing AI learning stats, and Team Management.' },
+      { q: 'What\'s on the Systems page?', a: 'System status cards, AI Instructions configuration, connected Google Sheets (coming soon), the Central Intelligence panel showing AI learning stats, and Team Management.' },
+      { q: 'How do I customize AI behavior?', a: 'Use System-Wide Instructions on the Systems page for global AI behavior. Use Department Instructions when editing a department for department-specific guidance.' },
       { q: 'How do I invite team members?', a: 'Go to Systems > Team Management > click "Invite Member". Enter their email, select a role, and optionally limit their department access.' },
       { q: 'What are the team roles?', a: 'Owner: Full access. Admin: Manage team and settings. Manager: Manage departments and issues. Member: View and contribute. Viewer: View only.' },
       { q: 'What\'s Central Intelligence?', a: 'The AI\'s learning system. It shows how many items the AI has learned from, recent insights, and top tags. Every action you take feeds this system.' }
@@ -635,6 +656,43 @@ export default function EmpireAI() {
                 ))}
               </div>
 
+              {/* AI INSTRUCTIONS PANEL */}
+              <div style={{ background: 'rgba(30, 41, 59, 0.8)', backdropFilter: 'blur(10px)', borderRadius: '16px', padding: '20px', border: '1px solid rgba(255,255,255,0.06)', marginBottom: '24px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <div style={{ width: 40, height: 40, borderRadius: '10px', background: 'rgba(245, 158, 11, 0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><FileText size={20} style={{ color: '#F59E0B' }}/></div>
+                    <div><h3 style={{ fontWeight: 600 }}>System-Wide AI Instructions</h3><p style={{ fontSize: '12px', color: '#64748B' }}>Custom instructions applied to ALL departments</p></div>
+                  </div>
+                  {!editingSystemInstructions && (
+                    <button onClick={() => { setTempSystemInstructions(systemInstructions); setEditingSystemInstructions(true); }} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', background: 'rgba(245, 158, 11, 0.2)', border: '1px solid rgba(245, 158, 11, 0.3)', borderRadius: '8px', color: '#F59E0B', cursor: 'pointer', fontSize: '13px', fontWeight: 500 }}><Edit3 size={16}/> Edit</button>
+                  )}
+                </div>
+                
+                {editingSystemInstructions ? (
+                  <div>
+                    <textarea value={tempSystemInstructions} onChange={(e) => setTempSystemInstructions(e.target.value)} placeholder="Enter system-wide instructions for the AI...
+
+Examples:
+- Always respond in a professional tone
+- Reference our safety policies when relevant
+- Prioritize customer satisfaction in recommendations
+- Use Empire Remodeling terminology" style={{ width: '100%', padding: '14px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '10px', color: '#E2E8F0', fontSize: '14px', minHeight: '150px', resize: 'vertical', lineHeight: '1.6' }}/>
+                    <div style={{ display: 'flex', gap: '12px', marginTop: '12px' }}>
+                      <button onClick={() => { setEditingSystemInstructions(false); setTempSystemInstructions(''); }} style={{ flex: 1, padding: '10px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', color: '#94A3B8', cursor: 'pointer', fontWeight: 500 }}>Cancel</button>
+                      <button onClick={() => { setSystemInstructions(tempSystemInstructions); setEditingSystemInstructions(false); addActivity('insight', 'System-wide AI instructions updated', 'System'); }} style={{ flex: 1, padding: '10px', background: 'linear-gradient(135deg, #F59E0B, #D97706)', border: 'none', borderRadius: '8px', color: 'white', cursor: 'pointer', fontWeight: 500 }}>Save Instructions</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ padding: '14px', background: 'rgba(255,255,255,0.03)', borderRadius: '10px', minHeight: '80px' }}>
+                    {systemInstructions ? (
+                      <p style={{ color: '#E2E8F0', fontSize: '14px', lineHeight: '1.6', whiteSpace: 'pre-wrap' }}>{systemInstructions}</p>
+                    ) : (
+                      <p style={{ color: '#64748B', fontSize: '14px', fontStyle: 'italic' }}>No system-wide instructions configured. Click "Edit" to add instructions that will apply to all AI conversations across every department.</p>
+                    )}
+                  </div>
+                )}
+              </div>
+
               {/* GOOGLE SHEETS */}
               <div style={{ background: 'rgba(30, 41, 59, 0.8)', backdropFilter: 'blur(10px)', borderRadius: '16px', padding: '20px', border: '1px solid rgba(255,255,255,0.06)', marginBottom: '24px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
@@ -731,7 +789,7 @@ export default function EmpireAI() {
             <div>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px' }}>
                 <h1 style={{ fontSize: '28px', fontWeight: 700 }}>Knowledge Base</h1>
-                <button onClick={() => { setEditingDept(null); setNewDept({ name: '', icon: 'Building', color: '#3B82F6', description: '' }); setShowDeptModal(true); }} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '10px 16px', background: 'rgba(59, 130, 246, 0.2)', border: '1px solid rgba(59, 130, 246, 0.3)', borderRadius: '10px', color: '#3B82F6', cursor: 'pointer', fontWeight: 500 }}><Plus size={18}/> Add Department</button>
+                <button onClick={() => { setEditingDept(null); setNewDept({ name: '', icon: 'Building', color: '#3B82F6', description: '', instructions: '' }); setShowDeptModal(true); }} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '10px 16px', background: 'rgba(59, 130, 246, 0.2)', border: '1px solid rgba(59, 130, 246, 0.3)', borderRadius: '10px', color: '#3B82F6', cursor: 'pointer', fontWeight: 500 }}><Plus size={18}/> Add Department</button>
               </div>
 
               {viewingDeptDocs ? (
@@ -778,7 +836,7 @@ export default function EmpireAI() {
                         <div style={{ width: 48, height: 48, borderRadius: '12px', background: `${dept.color}20`, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '12px' }}><IconComp size={24} style={{ color: dept.color }}/></div>
                         <div style={{ fontSize: '48px', fontWeight: 700, color: dept.color, fontFamily: "'Space Mono', monospace", marginBottom: '4px' }}>{docCount}</div>
                         <div style={{ fontWeight: 600, marginBottom: '4px' }}>{dept.name}</div>
-                        <div style={{ fontSize: '12px', color: '#64748B', marginBottom: '16px' }}>{docCount === 1 ? 'document' : 'documents'}</div>
+                        <div style={{ fontSize: '12px', color: '#64748B', marginBottom: '16px' }}>{docCount === 1 ? 'document' : 'documents'}{dept.instructions ? ' • Has AI instructions' : ''}</div>
                         <div style={{ display: 'flex', gap: '8px' }}>
                           <button onClick={() => { setViewingDeptDocs(dept.id); }} style={{ flex: 1, padding: '8px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', color: '#94A3B8', cursor: 'pointer', fontSize: '12px', fontWeight: 500 }}>Docs</button>
                           <button onClick={() => { setViewingDeptDocs(dept.id); setShowUploadModal(true); }} style={{ flex: 1, padding: '8px', background: `${dept.color}20`, border: `1px solid ${dept.color}40`, borderRadius: '8px', color: dept.color, cursor: 'pointer', fontSize: '12px', fontWeight: 500 }}>Upload</button>
@@ -915,12 +973,14 @@ export default function EmpireAI() {
                 {currentDeptInfo ? (
                   <>
                     <div style={{ width: 40, height: 40, borderRadius: '10px', background: `${currentDeptInfo.color}20`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{React.createElement(getIconComponent(currentDeptInfo.icon), { size: 20, style: { color: currentDeptInfo.color } })}</div>
-                    <div><div style={{ fontWeight: 600 }}>{currentDeptInfo.name}</div><div style={{ fontSize: '12px', color: '#64748B' }}>{currentDeptInfo.description}</div></div>
+                    <div style={{ flex: 1 }}><div style={{ fontWeight: 600 }}>{currentDeptInfo.name}</div><div style={{ fontSize: '12px', color: '#64748B' }}>{currentDeptInfo.description}</div></div>
+                    {(systemInstructions || currentDeptInfo.instructions) && <div style={{ padding: '4px 10px', background: 'rgba(245, 158, 11, 0.2)', borderRadius: '6px', fontSize: '11px', color: '#F59E0B' }}>Custom Instructions Active</div>}
                   </>
                 ) : (
                   <>
                     <div style={{ width: 40, height: 40, borderRadius: '10px', background: 'linear-gradient(135deg, #3B82F6, #8B5CF6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><MessageSquare size={20}/></div>
-                    <div><div style={{ fontWeight: 600 }}>General Chat</div><div style={{ fontSize: '12px', color: '#64748B' }}>Ask anything about Empire Remodeling</div></div>
+                    <div style={{ flex: 1 }}><div style={{ fontWeight: 600 }}>General Chat</div><div style={{ fontSize: '12px', color: '#64748B' }}>Ask anything about Empire Remodeling</div></div>
+                    {systemInstructions && <div style={{ padding: '4px 10px', background: 'rgba(245, 158, 11, 0.2)', borderRadius: '6px', fontSize: '11px', color: '#F59E0B' }}>System Instructions Active</div>}
                   </>
                 )}
               </div>
@@ -967,7 +1027,7 @@ export default function EmpireAI() {
       {/* VOICE MODAL */}
       {showVoiceModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(10px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
-          <div style={{ background: 'linear-gradient(135deg, #0F172A, #1E293B)', borderRadius: '24px', padding: '40px', width: '90%', maxWidth: '500px', textAlign: 'center', border: '1px solid rgba(255,255,255,0.1)' }}>
+          <div style={{ background: 'linear-gradient(135deg, #0F172A, #1E293B)', borderRadius: '24px', padding: '40px', width: '90%', maxWidth: '500px', textAlign: 'center', border: '1px solid rgba(255,255,255,0.1)', position: 'relative' }}>
             <button onClick={() => { setShowVoiceModal(false); stopVoiceSession(); }} style={{ position: 'absolute', top: '20px', right: '20px', background: 'none', border: 'none', color: '#94A3B8', cursor: 'pointer' }}><X size={24}/></button>
             
             <div style={{ width: 160, height: 160, margin: '0 auto 24px', borderRadius: '50%', background: voiceStatus === 'idle' ? 'rgba(59, 130, 246, 0.2)' : voiceStatus === 'listening' ? 'rgba(16, 185, 129, 0.3)' : voiceStatus === 'processing' ? 'rgba(245, 158, 11, 0.3)' : 'rgba(139, 92, 246, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', animation: voiceStatus !== 'idle' ? 'pulse 2s infinite' : 'none', boxShadow: voiceStatus !== 'idle' ? `0 0 60px ${voiceStatus === 'listening' ? 'rgba(16, 185, 129, 0.4)' : voiceStatus === 'processing' ? 'rgba(245, 158, 11, 0.4)' : 'rgba(139, 92, 246, 0.4)'}` : 'none' }}>
@@ -1069,8 +1129,8 @@ export default function EmpireAI() {
       {/* DEPARTMENT MODAL */}
       {showDeptModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
-          <div style={{ background: 'linear-gradient(135deg, #1E293B, #0F172A)', borderRadius: '16px', padding: '24px', width: '90%', maxWidth: '400px', border: '1px solid rgba(255,255,255,0.1)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}><h3 style={{ fontWeight: 600 }}>{editingDept ? 'Edit Department' : 'Add Department'}</h3><button onClick={() => { setShowDeptModal(false); setEditingDept(null); setNewDept({ name: '', icon: 'Building', color: '#3B82F6', description: '' }); }} style={{ background: 'none', border: 'none', color: '#94A3B8', cursor: 'pointer' }}><X size={20}/></button></div>
+          <div style={{ background: 'linear-gradient(135deg, #1E293B, #0F172A)', borderRadius: '16px', padding: '24px', width: '90%', maxWidth: '500px', border: '1px solid rgba(255,255,255,0.1)', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}><h3 style={{ fontWeight: 600 }}>{editingDept ? 'Edit Department' : 'Add Department'}</h3><button onClick={() => { setShowDeptModal(false); setEditingDept(null); setNewDept({ name: '', icon: 'Building', color: '#3B82F6', description: '', instructions: '' }); }} style={{ background: 'none', border: 'none', color: '#94A3B8', cursor: 'pointer' }}><X size={20}/></button></div>
             <input value={newDept.name} onChange={(e) => setNewDept({ ...newDept, name: e.target.value })} placeholder="Department name..." style={{ width: '100%', padding: '12px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', color: '#E2E8F0', marginBottom: '12px', fontSize: '14px' }}/>
             <textarea value={newDept.description} onChange={(e) => setNewDept({ ...newDept, description: e.target.value })} placeholder="Description (optional)..." style={{ width: '100%', padding: '12px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', color: '#E2E8F0', marginBottom: '12px', fontSize: '14px', minHeight: '60px', resize: 'vertical' }}/>
             <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
@@ -1079,6 +1139,22 @@ export default function EmpireAI() {
               </select>
               <input type="color" value={newDept.color} onChange={(e) => setNewDept({ ...newDept, color: e.target.value })} style={{ width: '50px', height: '44px', padding: '4px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', cursor: 'pointer' }}/>
             </div>
+            
+            {/* DEPARTMENT AI INSTRUCTIONS */}
+            <div style={{ background: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.2)', borderRadius: '10px', padding: '16px', marginBottom: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+                <FileText size={16} style={{ color: '#F59E0B' }}/>
+                <span style={{ fontWeight: 500, color: '#F59E0B', fontSize: '13px' }}>Department AI Instructions</span>
+              </div>
+              <textarea value={newDept.instructions} onChange={(e) => setNewDept({ ...newDept, instructions: e.target.value })} placeholder={`Custom instructions for this department's AI responses...
+
+Examples:
+- Focus on lead conversion strategies
+- Always mention our 5-year warranty
+- Use technical terminology appropriate for contractors`} style={{ width: '100%', padding: '12px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', color: '#E2E8F0', fontSize: '14px', minHeight: '100px', resize: 'vertical', lineHeight: '1.5' }}/>
+              <p style={{ fontSize: '11px', color: '#64748B', marginTop: '8px' }}>These instructions will be applied when chatting in this department, in addition to any system-wide instructions.</p>
+            </div>
+            
             <button onClick={editingDept ? saveDepartmentEdit : addDepartment} style={{ width: '100%', padding: '12px', background: 'linear-gradient(135deg, #3B82F6, #8B5CF6)', border: 'none', borderRadius: '8px', color: 'white', fontWeight: 500, cursor: 'pointer' }}>{editingDept ? 'Save Changes' : 'Add Department'}</button>
           </div>
         </div>
