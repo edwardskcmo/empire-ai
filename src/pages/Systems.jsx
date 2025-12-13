@@ -244,7 +244,14 @@ Examples:
             </div>
           </div>
         ) : (
-          <div style={{ color: systemInstructions ? '#E2E8F0' : '#64748B', fontStyle: systemInstructions ? 'normal' : 'italic', lineHeight: 1.6 }}>
+          <div style={{ 
+            color: systemInstructions ? '#E2E8F0' : '#64748B', 
+            fontStyle: systemInstructions ? 'normal' : 'italic', 
+            lineHeight: 1.6,
+            whiteSpace: 'pre-wrap',
+            maxHeight: '200px',
+            overflowY: 'auto'
+          }}>
             {systemInstructions || 'No system-wide instructions configured. Click Edit to add custom behavior for the AI.'}
           </div>
         )}
