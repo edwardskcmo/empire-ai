@@ -1,129 +1,231 @@
 import React, { useState } from 'react';
 import { 
-  BookOpen, Plus, Upload, Lightbulb, MoreVertical, Trash2, Edit2, X,
-  FileText, Link, RefreshCw, ExternalLink, CheckCircle, AlertCircle, Clock,
-  ChevronLeft, GripVertical
+  BookOpen, Plus, Upload, Lightbulb, MoreVertical, Edit2, Trash2,
+  FileText, Link, ExternalLink, RefreshCw, X, CheckCircle, AlertCircle,
+  Loader
 } from 'lucide-react';
-import { generateId, extractTags, formatDate } from '../utils';
 
-export default function Knowledge({ 
-  departments, 
+export default function Knowledge({
+  departments,
   setDepartments,
-  knowledge, 
+  knowledge,
   setKnowledge,
-  connectedDocs,
-  setConnectedDocs,
-  refreshAllDocs,
-  fetchConnectedDoc,
   logActivity,
   addToIntelligence,
-  getDeptIcon
+  connectedDocs = [],
+  setConnectedDocs = () => {},
+  fetchConnectedDoc = async () => {},
+  refreshAllDocs = async () => {}
 }) {
   const [selectedDept, setSelectedDept] = useState(null);
-  const [showAddDeptModal, setShowAddDeptModal] = useState(false);
-  const [showEditDeptModal, setShowEditDeptModal] = useState(false);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
   const [showInsightModal, setShowInsightModal] = useState(false);
-  const [showDocModal, setShowDocModal] = useState(false);
+  const [showConnectDocModal, setShowConnectDocModal] = useState(false);
   const [editingDept, setEditingDept] = useState(null);
   const [menuOpen, setMenuOpen] = useState(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  
-  // New doc form state
-  const [newDoc, setNewDoc] = useState({ name: '', url: '', department: '' });
-  
-  // New department form
-  const [newDept, setNewDept] = useState({
-    name: '', description: '', icon: 'Building2', color: '#3B82F6', instructions: ''
-  });
-  
-  // New insight form
+
+  const [newDept, setNewDept] = useState({ name: '', description: '', icon: '📁', color: '#3B82F6', instructions: '' });
   const [newInsight, setNewInsight] = useState({ title: '', content: '', department: '' });
+  const [newDoc, setNewDoc] = useState({ name: '', url: '', department: '' });
 
-  const iconOptions = ['Building2', 'TrendingUp', 'Users', 'Wrench', 'DollarSign', 'GraduationCap', 'Shield', 'Briefcase'];
-  const colorOptions = ['#3B82F6', '#8B5CF6', '#10B981', '#F59E0B', '#EF4444', '#EC4899', '#06B6D4', '#64748B'];
+  const iconOptions = ['📁', '💼', '📊', '🎯', '💡', '🔧', '📋', '🏠', '💰', '👥', '🛡️', '📦', '🎨', '📱', '🌐'];
+  const colorOptions = ['#3B82F6', '#8B5CF6', '#10B981', '#F59E0B', '#EF4444', '#EC4899', '#06B6D4', '#6366F1'];
 
-  // Get docs for current department
-  const getDeptDocs = (deptId) => knowledge.filter(k => k.department === deptId);
-  
-  // Get connected docs for department
-  const getDeptConnectedDocs = (deptId) => connectedDocs.filter(d => d.department === deptId);
+  // Get knowledge for a department
+  const getDeptKnowledge = (deptId) => {
+    return knowledge.filter(k => k.department === deptId);
+  };
 
-  // Add new connected doc
-  const addConnectedDoc = async () => {
-    if (!newDoc.name || !newDoc.url || !newDoc.department) return;
+  // Add new department
+  const handleAddDept = () => {
+    if (!newDept.name.trim()) return;
     
-    const doc = {
-      id: generateId('doc'),
-      name: newDoc.name,
-      url: newDoc.url,
-      department: newDoc.department,
-      status: 'syncing',
-      content: null,
-      lastFetched: null,
+    const dept = {
+      id: `dept_${Date.now()}`,
+      name: newDept.name.trim(),
+      description: newDept.description.trim(),
+      icon: newDept.icon,
+      color: newDept.color,
+      instructions: newDept.instructions.trim()
+    };
+    
+    setDepartments(prev => [...prev, dept]);
+    logActivity(`Created department: ${dept.name}`, 'department');
+    
+    if (addToIntelligence) {
+      addToIntelligence({
+        sourceType: 'department_change',
+        sourceId: dept.id,
+        title: `New Department: ${dept.name}`,
+        content: dept.description,
+        department: dept.id,
+        tags: ['department', 'organization', 'new'],
+        relevanceBoost: 3
+      });
+    }
+    
+    setNewDept({ name: '', description: '', icon: '📁', color: '#3B82F6', instructions: '' });
+    setShowAddModal(false);
+  };
+
+  // Edit department
+  const handleEditDept = () => {
+    if (!editingDept || !editingDept.name.trim()) return;
+    
+    setDepartments(prev => prev.map(d => 
+      d.id === editingDept.id ? editingDept : d
+    ));
+    logActivity(`Updated department: ${editingDept.name}`, 'department');
+    setShowEditModal(false);
+    setEditingDept(null);
+  };
+
+  // Delete department
+  const handleDeleteDept = (deptId) => {
+    const dept = departments.find(d => d.id === deptId);
+    if (!dept) return;
+    
+    if (window.confirm(`Delete "${dept.name}" and all its documents?`)) {
+      setDepartments(prev => prev.filter(d => d.id !== deptId));
+      setKnowledge(prev => prev.filter(k => k.department !== deptId));
+      logActivity(`Deleted department: ${dept.name}`, 'department');
+      setMenuOpen(null);
+    }
+  };
+
+  // Add insight
+  const handleAddInsight = () => {
+    if (!newInsight.title.trim() || !newInsight.content.trim() || !newInsight.department) return;
+    
+    const insight = {
+      id: `knowledge_${Date.now()}`,
+      title: newInsight.title.trim(),
+      content: newInsight.content.trim(),
+      department: newInsight.department,
+      type: 'insight',
       createdAt: new Date().toISOString()
     };
     
-    setConnectedDocs(prev => [...prev, doc]);
-    setNewDoc({ name: '', url: '', department: '' });
-    setShowDocModal(false);
+    setKnowledge(prev => [insight, ...prev]);
+    logActivity(`Added insight: ${insight.title}`, 'knowledge');
     
-    logActivity('Doc connected', `Added "${doc.name}" to knowledge base`);
-    
-    // Fetch content immediately
-    const updatedDoc = await fetchConnectedDoc(doc);
-    setConnectedDocs(prev => prev.map(d => d.id === doc.id ? updatedDoc : d));
-    
-    // Add to knowledge base if successful
-    if (updatedDoc.status === 'synced' && updatedDoc.content) {
-      const knowledgeItem = {
-        id: generateId('know'),
-        type: 'google-doc',
-        title: updatedDoc.name,
-        content: updatedDoc.content.substring(0, 5000),
-        department: updatedDoc.department,
-        linkedDocId: updatedDoc.id,
-        linkedDocUrl: updatedDoc.url,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
-      setKnowledge(prev => [knowledgeItem, ...prev]);
-      
+    if (addToIntelligence) {
       addToIntelligence({
-        id: generateId('intel'),
-        sourceType: 'google_doc',
-        sourceId: updatedDoc.id,
-        title: updatedDoc.name,
-        content: updatedDoc.content.substring(0, 1000),
-        department: updatedDoc.department,
-        tags: extractTags(updatedDoc.content),
-        metadata: { url: updatedDoc.url },
-        createdAt: new Date().toISOString(),
+        sourceType: 'knowledge',
+        sourceId: insight.id,
+        title: insight.title,
+        content: insight.content,
+        department: insight.department,
         relevanceBoost: 2
       });
     }
+    
+    setNewInsight({ title: '', content: '', department: '' });
+    setShowInsightModal(false);
   };
 
-  // Remove connected doc
-  const removeConnectedDoc = (docId) => {
-    setConnectedDocs(prev => prev.filter(d => d.id !== docId));
-    // Also remove from knowledge
-    setKnowledge(prev => prev.filter(k => k.linkedDocId !== docId));
-    logActivity('Doc disconnected', 'Removed connected document');
+  // Handle file upload
+  const handleFileUpload = (e, deptId) => {
+    const files = Array.from(e.target.files);
+    
+    files.forEach(file => {
+      const doc = {
+        id: `knowledge_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        title: file.name,
+        content: `Uploaded file: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`,
+        department: deptId,
+        type: 'document',
+        fileType: file.type,
+        fileSize: file.size,
+        createdAt: new Date().toISOString()
+      };
+      
+      setKnowledge(prev => [doc, ...prev]);
+      logActivity(`Uploaded: ${file.name}`, 'upload');
+      
+      if (addToIntelligence) {
+        addToIntelligence({
+          sourceType: 'document_upload',
+          sourceId: doc.id,
+          title: file.name,
+          content: `Document uploaded to ${departments.find(d => d.id === deptId)?.name || 'Unknown'}`,
+          department: deptId,
+          tags: ['document', 'upload', file.type.split('/')[1] || 'file'],
+          relevanceBoost: 1
+        });
+      }
+    });
+    
+    e.target.value = '';
+  };
+
+  // Delete knowledge item
+  const handleDeleteKnowledge = (itemId) => {
+    if (window.confirm('Delete this item?')) {
+      setKnowledge(prev => prev.filter(k => k.id !== itemId));
+      logActivity('Deleted knowledge item', 'knowledge');
+    }
+  };
+
+  // Connect Google Doc/Sheet
+  const handleConnectDoc = async () => {
+    if (!newDoc.name.trim() || !newDoc.url.trim() || !newDoc.department) return;
+    
+    const doc = {
+      id: `gdoc_${Date.now()}`,
+      name: newDoc.name.trim(),
+      url: newDoc.url.trim(),
+      department: newDoc.department,
+      status: 'syncing',
+      content: null,
+      error: null,
+      createdAt: new Date().toISOString(),
+      lastFetched: null
+    };
+    
+    setConnectedDocs(prev => [...prev, doc]);
+    setShowConnectDocModal(false);
+    setNewDoc({ name: '', url: '', department: '' });
+    
+    // Fetch the doc
+    const updated = await fetchConnectedDoc(doc);
+    setConnectedDocs(prev => prev.map(d => d.id === doc.id ? updated : d));
+    
+    if (updated.status === 'synced') {
+      logActivity(`Connected: ${doc.name}`, 'google_doc');
+      
+      // Add to knowledge
+      const knowledgeItem = {
+        id: `knowledge_${doc.id}`,
+        title: doc.name,
+        content: updated.content?.substring(0, 500) + '...',
+        department: doc.department,
+        type: 'google_doc',
+        linkedDocId: doc.id,
+        createdAt: new Date().toISOString()
+      };
+      setKnowledge(prev => [knowledgeItem, ...prev]);
+      
+      if (addToIntelligence) {
+        addToIntelligence({
+          sourceType: 'google_doc',
+          sourceId: doc.id,
+          title: doc.name,
+          content: updated.content,
+          department: doc.department,
+          relevanceBoost: 2
+        });
+      }
+    }
   };
 
   // Refresh single doc
-  const refreshSingleDoc = async (doc) => {
-    const updated = await fetchConnectedDoc({ ...doc, status: 'syncing' });
+  const handleRefreshDoc = async (doc) => {
+    setConnectedDocs(prev => prev.map(d => d.id === doc.id ? { ...d, status: 'syncing' } : d));
+    const updated = await fetchConnectedDoc(doc);
     setConnectedDocs(prev => prev.map(d => d.id === doc.id ? updated : d));
-    
-    // Update knowledge if successful
-    if (updated.status === 'synced' && updated.content) {
-      setKnowledge(prev => prev.map(k => 
-        k.linkedDocId === doc.id 
-          ? { ...k, content: updated.content.substring(0, 5000), updatedAt: new Date().toISOString() }
-          : k
-      ));
-    }
   };
 
   // Refresh all docs
@@ -133,201 +235,104 @@ export default function Knowledge({
     setIsRefreshing(false);
   };
 
-  // Add department
-  const addDepartment = () => {
-    if (!newDept.name) return;
-    const dept = {
-      id: generateId('dept'),
-      ...newDept
-    };
-    setDepartments(prev => [...prev, dept]);
-    setNewDept({ name: '', description: '', icon: 'Building2', color: '#3B82F6', instructions: '' });
-    setShowAddDeptModal(false);
-    logActivity('Department created', dept.name);
-    
-    addToIntelligence({
-      id: generateId('intel'),
-      sourceType: 'department_change',
-      sourceId: dept.id,
-      title: `New Department: ${dept.name}`,
-      content: dept.description || 'New department created',
-      department: dept.id,
-      tags: ['department', 'organization', 'new'],
-      metadata: {},
-      createdAt: new Date().toISOString(),
-      relevanceBoost: 3
-    });
+  // Remove connected doc
+  const handleRemoveDoc = (docId) => {
+    if (window.confirm('Disconnect this document?')) {
+      setConnectedDocs(prev => prev.filter(d => d.id !== docId));
+      setKnowledge(prev => prev.filter(k => k.linkedDocId !== docId));
+      logActivity('Disconnected Google Doc', 'google_doc');
+    }
   };
 
-  // Save department edit
-  const saveDepartmentEdit = () => {
-    if (!editingDept) return;
-    setDepartments(prev => prev.map(d => d.id === editingDept.id ? editingDept : d));
-    setShowEditDeptModal(false);
-    setEditingDept(null);
-    logActivity('Department updated', editingDept.name);
-  };
-
-  // Delete department
-  const deleteDepartment = (deptId) => {
-    const dept = departments.find(d => d.id === deptId);
-    setDepartments(prev => prev.filter(d => d.id !== deptId));
-    setKnowledge(prev => prev.filter(k => k.department !== deptId));
-    setConnectedDocs(prev => prev.filter(d => d.department !== deptId));
-    setMenuOpen(null);
-    logActivity('Department deleted', dept?.name);
-  };
-
-  // Add insight
-  const addInsight = () => {
-    if (!newInsight.title || !newInsight.content) return;
-    const insight = {
-      id: generateId('know'),
-      type: 'insight',
-      ...newInsight,
-      createdAt: new Date().toISOString()
-    };
-    setKnowledge(prev => [insight, ...prev]);
-    setNewInsight({ title: '', content: '', department: selectedDept?.id || '' });
-    setShowInsightModal(false);
-    logActivity('Insight logged', insight.title);
-    
-    addToIntelligence({
-      id: generateId('intel'),
-      sourceType: 'knowledge',
-      sourceId: insight.id,
-      title: insight.title,
-      content: insight.content,
-      department: insight.department,
-      tags: extractTags(insight.content),
-      metadata: {},
-      createdAt: new Date().toISOString(),
-      relevanceBoost: 2
-    });
-  };
-
-  // Handle file upload
-  const handleFileUpload = (deptId, e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    
-    const reader = new FileReader();
-    reader.onload = () => {
-      const doc = {
-        id: generateId('know'),
-        type: 'document',
-        title: file.name,
-        content: `File: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`,
-        department: deptId,
-        fileType: file.type,
-        createdAt: new Date().toISOString()
-      };
-      setKnowledge(prev => [doc, ...prev]);
-      logActivity('Document uploaded', file.name);
-      
-      addToIntelligence({
-        id: generateId('intel'),
-        sourceType: 'document_upload',
-        sourceId: doc.id,
-        title: file.name,
-        content: `Uploaded document: ${file.name}`,
-        department: deptId,
-        tags: ['document', 'upload', file.type?.split('/')[1] || 'file'],
-        metadata: { fileType: file.type, size: file.size },
-        createdAt: new Date().toISOString(),
-        relevanceBoost: 1
-      });
-    };
-    reader.readAsDataURL(file);
-    e.target.value = '';
-  };
-
-  // Delete knowledge item
-  const deleteKnowledge = (id) => {
-    setKnowledge(prev => prev.filter(k => k.id !== id));
-    logActivity('Item deleted', 'Knowledge item removed');
-  };
-
-  // Status icon for connected docs
-  const StatusIcon = ({ status }) => {
-    if (status === 'synced') return <CheckCircle size={14} style={{ color: '#10B981' }} />;
-    if (status === 'error') return <AlertCircle size={14} style={{ color: '#EF4444' }} />;
-    if (status === 'syncing') return <RefreshCw size={14} style={{ color: '#F59E0B', animation: 'spin 1s linear infinite' }} />;
-    return <Clock size={14} style={{ color: '#64748B' }} />;
-  };
-
-  // Department docs view
+  // View department documents
   if (selectedDept) {
-    const deptDocs = getDeptDocs(selectedDept.id);
-    const deptConnectedDocs = getDeptConnectedDocs(selectedDept.id);
-    const DeptIcon = getDeptIcon(selectedDept.icon);
+    const dept = departments.find(d => d.id === selectedDept);
+    const deptKnowledge = getDeptKnowledge(selectedDept);
     
     return (
-      <div style={{ padding: '32px' }}>
-        {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '32px' }}>
-          <button
-            onClick={() => setSelectedDept(null)}
-            style={{
-              background: 'rgba(255,255,255,0.05)',
-              border: 'none',
-              borderRadius: '8px',
-              padding: '8px',
-              cursor: 'pointer',
-              color: '#94A3B8',
-              display: 'flex',
-              alignItems: 'center'
-            }}
-          >
-            <ChevronLeft size={20} />
-          </button>
+      <div style={{ padding: '24px' }}>
+        {/* Back button */}
+        <button
+          onClick={() => setSelectedDept(null)}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            background: 'none',
+            border: 'none',
+            color: '#94A3B8',
+            cursor: 'pointer',
+            marginBottom: '20px',
+            fontSize: '14px'
+          }}
+        >
+          ← Back to Departments
+        </button>
+
+        {/* Department header */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '16px',
+          marginBottom: '24px'
+        }}>
           <div style={{
-            width: '48px',
-            height: '48px',
-            background: `${selectedDept.color}20`,
+            width: '56px',
+            height: '56px',
+            background: dept?.color || '#3B82F6',
             borderRadius: '12px',
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'center'
+            justifyContent: 'center',
+            fontSize: '28px'
           }}>
-            <DeptIcon size={24} style={{ color: selectedDept.color }} />
+            {dept?.icon || '📁'}
           </div>
           <div>
-            <h1 style={{ color: '#E2E8F0', fontSize: '24px', fontWeight: '600' }}>{selectedDept.name}</h1>
-            <p style={{ color: '#64748B', fontSize: '14px' }}>{deptDocs.length} documents • {deptConnectedDocs.length} connected docs</p>
+            <h1 style={{ color: '#E2E8F0', fontSize: '24px', fontWeight: '700', margin: 0 }}>
+              {dept?.name || 'Department'}
+            </h1>
+            <p style={{ color: '#94A3B8', margin: '4px 0 0 0' }}>{deptKnowledge.length} items</p>
           </div>
+          
           <div style={{ marginLeft: 'auto', display: 'flex', gap: '12px' }}>
             <label style={{
               display: 'flex',
               alignItems: 'center',
               gap: '8px',
-              padding: '10px 16px',
-              background: 'rgba(59, 130, 246, 0.2)',
-              border: '1px solid rgba(59, 130, 246, 0.3)',
+              background: '#8B5CF6',
+              border: 'none',
               borderRadius: '8px',
+              padding: '10px 16px',
+              color: 'white',
               cursor: 'pointer',
-              color: '#3B82F6',
-              fontSize: '14px',
-              fontWeight: '500'
+              fontSize: '14px'
             }}>
               <Upload size={16} />
               Upload
-              <input type="file" hidden onChange={(e) => handleFileUpload(selectedDept.id, e)} />
+              <input
+                type="file"
+                multiple
+                onChange={(e) => handleFileUpload(e, selectedDept)}
+                style={{ display: 'none' }}
+              />
             </label>
             <button
-              onClick={() => { setNewInsight({ ...newInsight, department: selectedDept.id }); setShowInsightModal(true); }}
+              onClick={() => {
+                setNewInsight({ ...newInsight, department: selectedDept });
+                setShowInsightModal(true);
+              }}
               style={{
                 display: 'flex',
                 alignItems: 'center',
                 gap: '8px',
-                padding: '10px 16px',
-                background: 'rgba(139, 92, 246, 0.2)',
-                border: '1px solid rgba(139, 92, 246, 0.3)',
+                background: '#F59E0B',
+                border: 'none',
                 borderRadius: '8px',
+                padding: '10px 16px',
+                color: 'white',
                 cursor: 'pointer',
-                color: '#8B5CF6',
-                fontSize: '14px',
-                fontWeight: '500'
+                fontSize: '14px'
               }}
             >
               <Lightbulb size={16} />
@@ -336,95 +341,47 @@ export default function Knowledge({
           </div>
         </div>
 
-        {/* Connected Docs for this dept */}
-        {deptConnectedDocs.length > 0 && (
-          <div style={{ marginBottom: '24px' }}>
-            <h3 style={{ color: '#94A3B8', fontSize: '13px', fontWeight: '600', marginBottom: '12px' }}>CONNECTED GOOGLE DOCS</h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {deptConnectedDocs.map(doc => (
-                <div key={doc.id} style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '12px',
-                  padding: '12px 16px',
-                  background: 'rgba(30, 41, 59, 0.8)',
-                  borderRadius: '8px',
-                  border: '1px solid rgba(255,255,255,0.06)'
-                }}>
-                  <Link size={16} style={{ color: '#3B82F6' }} />
-                  <span style={{ color: '#E2E8F0', fontSize: '14px', flex: 1 }}>{doc.name}</span>
-                  <StatusIcon status={doc.status} />
-                  <span style={{ color: '#64748B', fontSize: '12px' }}>
-                    {doc.lastFetched ? formatDate(doc.lastFetched) : 'Never synced'}
-                  </span>
-                  <button
-                    onClick={() => refreshSingleDoc(doc)}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748B', padding: '4px' }}
-                  >
-                    <RefreshCw size={14} />
-                  </button>
-                  <a href={doc.url} target="_blank" rel="noopener noreferrer" style={{ color: '#64748B', padding: '4px' }}>
-                    <ExternalLink size={14} />
-                  </a>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Documents List */}
+        {/* Knowledge items */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          {deptDocs.length === 0 ? (
+          {deptKnowledge.length === 0 ? (
             <div style={{
-              textAlign: 'center',
-              padding: '60px',
-              color: '#64748B',
-              background: 'rgba(30, 41, 59, 0.5)',
+              background: 'rgba(30, 41, 59, 0.8)',
               borderRadius: '12px',
-              border: '1px dashed rgba(255,255,255,0.1)'
+              padding: '60px',
+              textAlign: 'center',
+              border: '1px solid rgba(255,255,255,0.06)'
             }}>
-              <BookOpen size={48} style={{ marginBottom: '16px', opacity: 0.5 }} />
-              <p style={{ fontSize: '16px', marginBottom: '8px' }}>No documents yet</p>
-              <p style={{ fontSize: '14px' }}>Upload files or log insights to build this department's knowledge</p>
+              <BookOpen size={48} style={{ color: '#64748B', marginBottom: '16px' }} />
+              <p style={{ color: '#94A3B8', fontSize: '16px' }}>No documents yet</p>
+              <p style={{ color: '#64748B', fontSize: '14px' }}>Upload files or log insights to build this department's knowledge</p>
             </div>
           ) : (
-            deptDocs.map(doc => (
-              <div key={doc.id} style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '16px',
-                padding: '16px',
+            deptKnowledge.map(item => (
+              <div key={item.id} style={{
                 background: 'rgba(30, 41, 59, 0.8)',
                 borderRadius: '10px',
-                border: '1px solid rgba(255,255,255,0.06)'
+                padding: '16px',
+                border: '1px solid rgba(255,255,255,0.06)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px'
               }}>
-                <div style={{
-                  width: '40px',
-                  height: '40px',
-                  background: doc.type === 'insight' ? 'rgba(139, 92, 246, 0.2)' : doc.type === 'google-doc' ? 'rgba(59, 130, 246, 0.2)' : 'rgba(59, 130, 246, 0.2)',
-                  borderRadius: '8px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center'
-                }}>
-                  {doc.type === 'insight' ? <Lightbulb size={18} style={{ color: '#8B5CF6' }} /> :
-                   doc.type === 'google-doc' ? <Link size={18} style={{ color: '#3B82F6' }} /> :
-                   <FileText size={18} style={{ color: '#3B82F6' }} />}
-                </div>
+                <FileText size={20} style={{ color: item.type === 'insight' ? '#F59E0B' : '#3B82F6' }} />
                 <div style={{ flex: 1 }}>
-                  <h4 style={{ color: '#E2E8F0', fontSize: '14px', fontWeight: '500', marginBottom: '4px' }}>{doc.title}</h4>
-                  <p style={{ color: '#64748B', fontSize: '13px' }}>
-                    {doc.type === 'google-doc' ? 'Connected Doc' : doc.type === 'insight' ? 'Insight' : 'Document'} • {formatDate(doc.createdAt)}
+                  <p style={{ color: '#E2E8F0', fontSize: '14px', fontWeight: '500', margin: 0 }}>{item.title}</p>
+                  <p style={{ color: '#64748B', fontSize: '12px', margin: '4px 0 0 0' }}>
+                    {item.type === 'insight' ? 'Insight' : 'Document'} • {new Date(item.createdAt).toLocaleDateString()}
                   </p>
                 </div>
                 <button
-                  onClick={() => deleteKnowledge(doc.id)}
+                  onClick={() => handleDeleteKnowledge(item.id)}
                   style={{
-                    background: 'none',
+                    background: 'rgba(239, 68, 68, 0.1)',
                     border: 'none',
+                    borderRadius: '6px',
+                    padding: '8px',
                     cursor: 'pointer',
-                    color: '#64748B',
-                    padding: '8px'
+                    color: '#EF4444'
                   }}
                 >
                   <Trash2 size={16} />
@@ -437,266 +394,237 @@ export default function Knowledge({
     );
   }
 
-  // Main Knowledge view - Department cards + Connected Docs panel
+  // Main department grid view
   return (
-    <div style={{ padding: '32px' }}>
+    <div style={{ padding: '24px' }}>
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '32px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px' }}>
         <div>
-          <h1 style={{ color: '#E2E8F0', fontSize: '28px', fontWeight: '600', marginBottom: '8px' }}>Knowledge Base</h1>
-          <p style={{ color: '#64748B' }}>Manage documents and insights by department</p>
+          <h1 style={{ fontSize: '28px', fontWeight: '700', color: '#E2E8F0', display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <BookOpen size={32} style={{ color: '#8B5CF6' }} />
+            Knowledge Base
+          </h1>
+          <p style={{ color: '#94A3B8', marginTop: '4px' }}>Manage documents and insights by department</p>
         </div>
-        <button
-          onClick={() => setShowAddDeptModal(true)}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            padding: '12px 20px',
-            background: 'linear-gradient(135deg, #3B82F6, #8B5CF6)',
-            border: 'none',
-            borderRadius: '10px',
-            cursor: 'pointer',
-            color: 'white',
-            fontSize: '14px',
-            fontWeight: '500'
-          }}
-        >
-          <Plus size={18} />
-          Add Department
-        </button>
-      </div>
-
-      {/* Connected Google Docs Panel */}
-      <div style={{
-        background: 'rgba(30, 41, 59, 0.8)',
-        borderRadius: '16px',
-        border: '1px solid rgba(59, 130, 246, 0.2)',
-        padding: '24px',
-        marginBottom: '32px'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <div style={{
-              width: '40px',
-              height: '40px',
-              background: 'rgba(59, 130, 246, 0.2)',
-              borderRadius: '10px',
+        <div style={{ display: 'flex', gap: '12px' }}>
+          <button
+            onClick={() => setShowConnectDocModal(true)}
+            style={{
               display: 'flex',
               alignItems: 'center',
-              justifyContent: 'center'
-            }}>
-              <Link size={20} style={{ color: '#3B82F6' }} />
-            </div>
-            <div>
-              <h2 style={{ color: '#E2E8F0', fontSize: '18px', fontWeight: '600' }}>Connected Google Docs</h2>
-              <p style={{ color: '#64748B', fontSize: '13px' }}>{connectedDocs.length} document(s) syncing automatically</p>
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: '12px' }}>
-            <button
-              onClick={handleRefreshAll}
-              disabled={isRefreshing || connectedDocs.length === 0}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                padding: '10px 16px',
-                background: 'rgba(255,255,255,0.05)',
-                border: '1px solid rgba(255,255,255,0.1)',
-                borderRadius: '8px',
-                cursor: connectedDocs.length === 0 ? 'not-allowed' : 'pointer',
-                color: '#94A3B8',
-                fontSize: '14px',
-                opacity: connectedDocs.length === 0 ? 0.5 : 1
-              }}
-            >
-              <RefreshCw size={16} className={isRefreshing ? 'spin' : ''} style={{ animation: isRefreshing ? 'spin 1s linear infinite' : 'none' }} />
-              Refresh All
-            </button>
-            <button
-              onClick={() => setShowDocModal(true)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                padding: '10px 16px',
-                background: 'rgba(59, 130, 246, 0.2)',
-                border: '1px solid rgba(59, 130, 246, 0.3)',
-                borderRadius: '8px',
-                cursor: 'pointer',
-                color: '#3B82F6',
-                fontSize: '14px',
-                fontWeight: '500'
-              }}
-            >
-              <Plus size={16} />
-              Connect Doc
-            </button>
-          </div>
-        </div>
-
-        {/* Connected Docs List */}
-        {connectedDocs.length === 0 ? (
-          <div style={{
-            textAlign: 'center',
-            padding: '40px',
-            color: '#64748B',
-            background: 'rgba(15, 23, 42, 0.5)',
-            borderRadius: '10px',
-            border: '1px dashed rgba(255,255,255,0.1)'
-          }}>
-            <Link size={32} style={{ marginBottom: '12px', opacity: 0.5 }} />
-            <p style={{ fontSize: '14px', marginBottom: '8px' }}>No Google Docs connected yet</p>
-            <p style={{ fontSize: '13px' }}>Connect a published Google Doc to sync its content automatically</p>
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {connectedDocs.map(doc => {
-              const dept = departments.find(d => d.id === doc.department);
-              return (
-                <div key={doc.id} style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '12px',
-                  padding: '12px 16px',
-                  background: 'rgba(15, 23, 42, 0.5)',
-                  borderRadius: '8px',
-                  border: '1px solid rgba(255,255,255,0.04)'
-                }}>
-                  <FileText size={18} style={{ color: '#3B82F6' }} />
-                  <div style={{ flex: 1 }}>
-                    <div style={{ color: '#E2E8F0', fontSize: '14px', fontWeight: '500' }}>{doc.name}</div>
-                    <div style={{ color: '#64748B', fontSize: '12px' }}>
-                      {dept?.name || 'No department'} • {doc.lastFetched ? `Synced ${formatDate(doc.lastFetched)}` : 'Never synced'}
-                    </div>
-                    {doc.error && <div style={{ color: '#EF4444', fontSize: '12px' }}>{doc.error}</div>}
-                  </div>
-                  <StatusIcon status={doc.status} />
-                  <button
-                    onClick={() => refreshSingleDoc(doc)}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748B', padding: '6px' }}
-                    title="Refresh"
-                  >
-                    <RefreshCw size={14} />
-                  </button>
-                  <a 
-                    href={doc.url} 
-                    target="_blank" 
-                    rel="noopener noreferrer" 
-                    style={{ color: '#64748B', padding: '6px' }}
-                    title="Open in Google Docs"
-                  >
-                    <ExternalLink size={14} />
-                  </a>
-                  <button
-                    onClick={() => removeConnectedDoc(doc.id)}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748B', padding: '6px' }}
-                    title="Disconnect"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        )}
-        
-        {/* Instructions */}
-        <div style={{
-          marginTop: '16px',
-          padding: '12px 16px',
-          background: 'rgba(59, 130, 246, 0.1)',
-          borderRadius: '8px',
-          fontSize: '13px',
-          color: '#94A3B8'
-        }}>
-          <strong style={{ color: '#3B82F6' }}>How to connect:</strong> Open your Google Doc → File → Share → Publish to web → Copy the link and paste it here. Content syncs automatically every 5 minutes.
+              gap: '8px',
+              background: 'rgba(16, 185, 129, 0.2)',
+              border: '1px solid rgba(16, 185, 129, 0.3)',
+              borderRadius: '8px',
+              padding: '10px 16px',
+              color: '#10B981',
+              cursor: 'pointer',
+              fontSize: '14px'
+            }}
+          >
+            <Link size={16} />
+            Connect Doc
+          </button>
+          <button
+            onClick={() => setShowAddModal(true)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              background: '#3B82F6',
+              border: 'none',
+              borderRadius: '8px',
+              padding: '10px 16px',
+              color: 'white',
+              cursor: 'pointer',
+              fontSize: '14px'
+            }}
+          >
+            <Plus size={16} />
+            Add Department
+          </button>
         </div>
       </div>
 
-      {/* Department Cards Grid */}
-      <h3 style={{ color: '#94A3B8', fontSize: '13px', fontWeight: '600', marginBottom: '16px' }}>DEPARTMENTS</h3>
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
-        gap: '20px'
-      }}>
-        {departments.map(dept => {
-          const DeptIcon = getDeptIcon(dept.icon);
-          const docCount = getDeptDocs(dept.id).length;
-          const connectedCount = getDeptConnectedDocs(dept.id).length;
-          
-          return (
-            <div
-              key={dept.id}
+      {/* Connected Google Docs/Sheets */}
+      {connectedDocs.length > 0 && (
+        <div style={{
+          background: 'rgba(30, 41, 59, 0.8)',
+          borderRadius: '12px',
+          padding: '20px',
+          marginBottom: '24px',
+          border: '1px solid rgba(255,255,255,0.06)'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+            <h3 style={{ color: '#E2E8F0', fontSize: '16px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px', margin: 0 }}>
+              <Link size={18} style={{ color: '#10B981' }} />
+              Connected Google Docs/Sheets
+            </h3>
+            <button
+              onClick={handleRefreshAll}
+              disabled={isRefreshing}
               style={{
-                background: 'rgba(30, 41, 59, 0.8)',
-                borderRadius: '16px',
-                border: '1px solid rgba(255,255,255,0.06)',
-                padding: '24px',
-                position: 'relative'
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                background: 'rgba(255,255,255,0.1)',
+                border: 'none',
+                borderRadius: '6px',
+                padding: '6px 12px',
+                color: '#94A3B8',
+                cursor: 'pointer',
+                fontSize: '13px'
               }}
             >
-              {/* Menu */}
+              <RefreshCw size={14} style={{ animation: isRefreshing ? 'spin 1s linear infinite' : 'none' }} />
+              Refresh All
+            </button>
+          </div>
+          
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            {connectedDocs.map(doc => (
+              <div key={doc.id} style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                background: 'rgba(15, 23, 42, 0.5)',
+                borderRadius: '8px',
+                padding: '12px'
+              }}>
+                {doc.status === 'synced' && <CheckCircle size={16} style={{ color: '#10B981' }} />}
+                {doc.status === 'error' && <AlertCircle size={16} style={{ color: '#EF4444' }} />}
+                {doc.status === 'syncing' && <Loader size={16} style={{ color: '#F59E0B', animation: 'spin 1s linear infinite' }} />}
+                
+                <div style={{ flex: 1 }}>
+                  <p style={{ color: '#E2E8F0', fontSize: '14px', margin: 0 }}>{doc.name}</p>
+                  <p style={{ color: '#64748B', fontSize: '12px', margin: '2px 0 0 0' }}>
+                    {doc.status === 'synced' && `Synced ${doc.lastFetched ? new Date(doc.lastFetched).toLocaleTimeString() : ''}`}
+                    {doc.status === 'error' && (doc.error || 'Failed to sync')}
+                    {doc.status === 'syncing' && 'Syncing...'}
+                  </p>
+                </div>
+                
+                <button
+                  onClick={() => handleRefreshDoc(doc)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    padding: '6px',
+                    cursor: 'pointer',
+                    color: '#94A3B8'
+                  }}
+                  title="Refresh"
+                >
+                  <RefreshCw size={14} />
+                </button>
+                <a
+                  href={doc.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: '#94A3B8', padding: '6px' }}
+                  title="Open in Google"
+                >
+                  <ExternalLink size={14} />
+                </a>
+                <button
+                  onClick={() => handleRemoveDoc(doc.id)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    padding: '6px',
+                    cursor: 'pointer',
+                    color: '#EF4444'
+                  }}
+                  title="Disconnect"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Department Cards Grid */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(4, 1fr)',
+        gap: '16px'
+      }}>
+        {departments.map(dept => {
+          const count = getDeptKnowledge(dept.id).length;
+          
+          return (
+            <div key={dept.id} style={{
+              background: 'rgba(30, 41, 59, 0.8)',
+              borderRadius: '12px',
+              padding: '20px',
+              border: '1px solid rgba(255,255,255,0.06)',
+              position: 'relative'
+            }}>
+              {/* Menu button */}
               <button
-                onClick={(e) => { e.stopPropagation(); setMenuOpen(menuOpen === dept.id ? null : dept.id); }}
+                onClick={() => setMenuOpen(menuOpen === dept.id ? null : dept.id)}
                 style={{
                   position: 'absolute',
-                  top: '16px',
-                  right: '16px',
+                  top: '12px',
+                  right: '12px',
                   background: 'none',
                   border: 'none',
+                  padding: '4px',
                   cursor: 'pointer',
-                  color: '#64748B',
-                  padding: '4px'
+                  color: '#64748B'
                 }}
               >
                 <MoreVertical size={18} />
               </button>
               
+              {/* Dropdown menu */}
               {menuOpen === dept.id && (
                 <div style={{
                   position: 'absolute',
-                  top: '44px',
-                  right: '16px',
-                  background: 'rgba(15, 23, 42, 0.98)',
-                  border: '1px solid rgba(255,255,255,0.1)',
+                  top: '40px',
+                  right: '12px',
+                  background: '#1E293B',
                   borderRadius: '8px',
+                  border: '1px solid rgba(255,255,255,0.1)',
                   overflow: 'hidden',
-                  zIndex: 10,
-                  minWidth: '140px'
+                  zIndex: 10
                 }}>
                   <button
-                    onClick={() => { setEditingDept(dept); setShowEditDeptModal(true); setMenuOpen(null); }}
+                    onClick={() => {
+                      setEditingDept({ ...dept });
+                      setShowEditModal(true);
+                      setMenuOpen(null);
+                    }}
                     style={{
                       display: 'flex',
                       alignItems: 'center',
                       gap: '8px',
                       width: '100%',
-                      padding: '10px 14px',
-                      background: 'transparent',
+                      padding: '10px 16px',
+                      background: 'none',
                       border: 'none',
-                      cursor: 'pointer',
                       color: '#E2E8F0',
-                      fontSize: '13px'
+                      cursor: 'pointer',
+                      fontSize: '14px'
                     }}
                   >
                     <Edit2 size={14} /> Edit
                   </button>
                   <button
-                    onClick={() => deleteDepartment(dept.id)}
+                    onClick={() => handleDeleteDept(dept.id)}
                     style={{
                       display: 'flex',
                       alignItems: 'center',
                       gap: '8px',
                       width: '100%',
-                      padding: '10px 14px',
-                      background: 'transparent',
+                      padding: '10px 16px',
+                      background: 'none',
                       border: 'none',
-                      cursor: 'pointer',
                       color: '#EF4444',
-                      fontSize: '13px'
+                      cursor: 'pointer',
+                      fontSize: '14px'
                     }}
                   >
                     <Trash2 size={14} /> Delete
@@ -704,74 +632,78 @@ export default function Knowledge({
                 </div>
               )}
 
-              {/* Icon & Count */}
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px', marginBottom: '16px' }}>
-                <div style={{
-                  width: '56px',
-                  height: '56px',
-                  background: `${dept.color}20`,
-                  borderRadius: '14px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center'
-                }}>
-                  <DeptIcon size={28} style={{ color: dept.color }} />
-                </div>
-                <div style={{
-                  fontSize: '36px',
-                  fontWeight: '700',
-                  color: '#E2E8F0',
-                  fontFamily: "'Space Mono', monospace"
-                }}>
-                  {docCount}
-                </div>
+              {/* Department icon */}
+              <div style={{
+                width: '48px',
+                height: '48px',
+                background: dept.color,
+                borderRadius: '12px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '24px',
+                marginBottom: '12px'
+              }}>
+                {dept.icon}
               </div>
 
-              {/* Name */}
-              <h3 style={{ color: '#E2E8F0', fontSize: '16px', fontWeight: '600', marginBottom: '8px' }}>{dept.name}</h3>
-              <p style={{ color: '#64748B', fontSize: '13px', marginBottom: '20px' }}>
-                {docCount} document{docCount !== 1 ? 's' : ''} • {connectedCount} connected
+              {/* Count */}
+              <p style={{
+                color: '#E2E8F0',
+                fontSize: '32px',
+                fontWeight: '700',
+                fontFamily: 'Space Mono, monospace',
+                margin: '0 0 4px 0'
+              }}>
+                {count}
               </p>
 
+              {/* Name */}
+              <p style={{ color: '#94A3B8', fontSize: '14px', margin: '0 0 16px 0' }}>{dept.name}</p>
+
               {/* Actions */}
-              <div style={{ display: 'flex', gap: '10px' }}>
+              <div style={{ display: 'flex', gap: '8px' }}>
                 <label style={{
                   flex: 1,
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                   gap: '6px',
-                  padding: '10px',
-                  background: `${dept.color}20`,
-                  border: `1px solid ${dept.color}40`,
-                  borderRadius: '8px',
+                  background: dept.color,
+                  border: 'none',
+                  borderRadius: '6px',
+                  padding: '8px',
+                  color: 'white',
                   cursor: 'pointer',
-                  color: dept.color,
-                  fontSize: '13px',
-                  fontWeight: '500'
+                  fontSize: '13px'
                 }}>
                   <Upload size={14} />
                   Upload
-                  <input type="file" hidden onChange={(e) => handleFileUpload(dept.id, e)} />
+                  <input
+                    type="file"
+                    multiple
+                    onChange={(e) => handleFileUpload(e, dept.id)}
+                    style={{ display: 'none' }}
+                  />
                 </label>
                 <button
-                  onClick={() => setSelectedDept(dept)}
+                  onClick={() => setSelectedDept(dept.id)}
                   style={{
                     flex: 1,
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
                     gap: '6px',
-                    padding: '10px',
-                    background: 'rgba(255,255,255,0.05)',
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    borderRadius: '8px',
+                    background: 'rgba(255,255,255,0.1)',
+                    border: 'none',
+                    borderRadius: '6px',
+                    padding: '8px',
+                    color: '#E2E8F0',
                     cursor: 'pointer',
-                    color: '#94A3B8',
                     fontSize: '13px'
                   }}
                 >
-                  <BookOpen size={14} />
+                  <FileText size={14} />
                   Docs
                 </button>
               </div>
@@ -781,138 +713,131 @@ export default function Knowledge({
       </div>
 
       {/* Add Department Modal */}
-      {showAddDeptModal && (
+      {showAddModal && (
         <div style={{
           position: 'fixed',
           inset: 0,
-          background: 'rgba(0,0,0,0.7)',
+          background: 'rgba(0,0,0,0.8)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           zIndex: 100
         }}>
           <div style={{
-            background: 'linear-gradient(135deg, #1E293B, #0F172A)',
+            background: '#1E293B',
             borderRadius: '16px',
-            border: '1px solid rgba(255,255,255,0.1)',
-            padding: '32px',
-            width: '100%',
-            maxWidth: '480px'
+            padding: '24px',
+            width: '450px',
+            maxWidth: '90vw'
           }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-              <h2 style={{ color: '#E2E8F0', fontSize: '20px', fontWeight: '600' }}>Add Department</h2>
-              <button onClick={() => setShowAddDeptModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748B' }}>
-                <X size={20} />
-              </button>
-            </div>
+            <h2 style={{ color: '#E2E8F0', fontSize: '20px', marginBottom: '20px' }}>Add Department</h2>
             
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-              <div>
-                <label style={{ display: 'block', color: '#94A3B8', fontSize: '13px', marginBottom: '8px' }}>Name</label>
-                <input
-                  type="text"
-                  value={newDept.name}
-                  onChange={(e) => setNewDept({ ...newDept, name: e.target.value })}
-                  placeholder="Department name"
-                  style={{
-                    width: '100%',
-                    padding: '12px 16px',
-                    background: 'rgba(15, 23, 42, 0.8)',
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    borderRadius: '8px',
-                    color: '#E2E8F0',
-                    fontSize: '14px',
-                    outline: 'none'
-                  }}
-                />
-              </div>
-              
-              <div>
-                <label style={{ display: 'block', color: '#94A3B8', fontSize: '13px', marginBottom: '8px' }}>Description</label>
-                <textarea
-                  value={newDept.description}
-                  onChange={(e) => setNewDept({ ...newDept, description: e.target.value })}
-                  placeholder="What does this department handle?"
-                  rows={3}
-                  style={{
-                    width: '100%',
-                    padding: '12px 16px',
-                    background: 'rgba(15, 23, 42, 0.8)',
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    borderRadius: '8px',
-                    color: '#E2E8F0',
-                    fontSize: '14px',
-                    outline: 'none',
-                    resize: 'none'
-                  }}
-                />
-              </div>
+            <input
+              type="text"
+              placeholder="Department name"
+              value={newDept.name}
+              onChange={(e) => setNewDept({ ...newDept, name: e.target.value })}
+              style={{
+                width: '100%',
+                background: 'rgba(15, 23, 42, 0.8)',
+                border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: '8px',
+                padding: '12px',
+                color: '#E2E8F0',
+                marginBottom: '12px',
+                fontSize: '14px',
+                boxSizing: 'border-box'
+              }}
+            />
+            
+            <textarea
+              placeholder="Description (optional)"
+              value={newDept.description}
+              onChange={(e) => setNewDept({ ...newDept, description: e.target.value })}
+              style={{
+                width: '100%',
+                background: 'rgba(15, 23, 42, 0.8)',
+                border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: '8px',
+                padding: '12px',
+                color: '#E2E8F0',
+                marginBottom: '12px',
+                fontSize: '14px',
+                minHeight: '80px',
+                resize: 'vertical',
+                boxSizing: 'border-box'
+              }}
+            />
 
-              <div style={{ display: 'flex', gap: '20px' }}>
-                <div style={{ flex: 1 }}>
-                  <label style={{ display: 'block', color: '#94A3B8', fontSize: '13px', marginBottom: '8px' }}>Icon</label>
-                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                    {iconOptions.map(icon => {
-                      const IconComp = getDeptIcon(icon);
-                      return (
-                        <button
-                          key={icon}
-                          onClick={() => setNewDept({ ...newDept, icon })}
-                          style={{
-                            width: '40px',
-                            height: '40px',
-                            background: newDept.icon === icon ? 'rgba(59, 130, 246, 0.3)' : 'rgba(255,255,255,0.05)',
-                            border: newDept.icon === icon ? '2px solid #3B82F6' : '1px solid rgba(255,255,255,0.1)',
-                            borderRadius: '8px',
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center'
-                          }}
-                        >
-                          <IconComp size={18} style={{ color: '#94A3B8' }} />
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-                
-                <div style={{ flex: 1 }}>
-                  <label style={{ display: 'block', color: '#94A3B8', fontSize: '13px', marginBottom: '8px' }}>Color</label>
-                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                    {colorOptions.map(color => (
-                      <button
-                        key={color}
-                        onClick={() => setNewDept({ ...newDept, color })}
-                        style={{
-                          width: '32px',
-                          height: '32px',
-                          background: color,
-                          border: newDept.color === color ? '3px solid white' : 'none',
-                          borderRadius: '8px',
-                          cursor: 'pointer'
-                        }}
-                      />
-                    ))}
-                  </div>
-                </div>
+            <div style={{ marginBottom: '12px' }}>
+              <p style={{ color: '#94A3B8', fontSize: '13px', marginBottom: '8px' }}>Icon</p>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                {iconOptions.map(icon => (
+                  <button
+                    key={icon}
+                    onClick={() => setNewDept({ ...newDept, icon })}
+                    style={{
+                      width: '40px',
+                      height: '40px',
+                      background: newDept.icon === icon ? 'rgba(59, 130, 246, 0.3)' : 'rgba(255,255,255,0.05)',
+                      border: newDept.icon === icon ? '2px solid #3B82F6' : '1px solid rgba(255,255,255,0.1)',
+                      borderRadius: '8px',
+                      fontSize: '20px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {icon}
+                  </button>
+                ))}
               </div>
-              
+            </div>
+
+            <div style={{ marginBottom: '20px' }}>
+              <p style={{ color: '#94A3B8', fontSize: '13px', marginBottom: '8px' }}>Color</p>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                {colorOptions.map(color => (
+                  <button
+                    key={color}
+                    onClick={() => setNewDept({ ...newDept, color })}
+                    style={{
+                      width: '36px',
+                      height: '36px',
+                      background: color,
+                      border: newDept.color === color ? '3px solid white' : 'none',
+                      borderRadius: '8px',
+                      cursor: 'pointer'
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
               <button
-                onClick={addDepartment}
-                disabled={!newDept.name}
+                onClick={() => setShowAddModal(false)}
                 style={{
-                  padding: '14px',
-                  background: newDept.name ? 'linear-gradient(135deg, #3B82F6, #8B5CF6)' : 'rgba(255,255,255,0.1)',
+                  background: 'rgba(255,255,255,0.1)',
                   border: 'none',
-                  borderRadius: '10px',
-                  cursor: newDept.name ? 'pointer' : 'not-allowed',
-                  color: 'white',
-                  fontSize: '14px',
-                  fontWeight: '600'
+                  borderRadius: '8px',
+                  padding: '10px 20px',
+                  color: '#94A3B8',
+                  cursor: 'pointer'
                 }}
               >
-                Create Department
+                Cancel
+              </button>
+              <button
+                onClick={handleAddDept}
+                style={{
+                  background: '#3B82F6',
+                  border: 'none',
+                  borderRadius: '8px',
+                  padding: '10px 20px',
+                  color: 'white',
+                  cursor: 'pointer'
+                }}
+              >
+                Add Department
               </button>
             </div>
           </div>
@@ -920,167 +845,162 @@ export default function Knowledge({
       )}
 
       {/* Edit Department Modal */}
-      {showEditDeptModal && editingDept && (
+      {showEditModal && editingDept && (
         <div style={{
           position: 'fixed',
           inset: 0,
-          background: 'rgba(0,0,0,0.7)',
+          background: 'rgba(0,0,0,0.8)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           zIndex: 100
         }}>
           <div style={{
-            background: 'linear-gradient(135deg, #1E293B, #0F172A)',
+            background: '#1E293B',
             borderRadius: '16px',
-            border: '1px solid rgba(255,255,255,0.1)',
-            padding: '32px',
-            width: '100%',
-            maxWidth: '480px',
-            maxHeight: '90vh',
-            overflowY: 'auto'
+            padding: '24px',
+            width: '450px',
+            maxWidth: '90vw'
           }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-              <h2 style={{ color: '#E2E8F0', fontSize: '20px', fontWeight: '600' }}>Edit Department</h2>
-              <button onClick={() => { setShowEditDeptModal(false); setEditingDept(null); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748B' }}>
-                <X size={20} />
-              </button>
-            </div>
+            <h2 style={{ color: '#E2E8F0', fontSize: '20px', marginBottom: '20px' }}>Edit Department</h2>
             
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-              <div>
-                <label style={{ display: 'block', color: '#94A3B8', fontSize: '13px', marginBottom: '8px' }}>Name</label>
-                <input
-                  type="text"
-                  value={editingDept.name}
-                  onChange={(e) => setEditingDept({ ...editingDept, name: e.target.value })}
-                  style={{
-                    width: '100%',
-                    padding: '12px 16px',
-                    background: 'rgba(15, 23, 42, 0.8)',
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    borderRadius: '8px',
-                    color: '#E2E8F0',
-                    fontSize: '14px',
-                    outline: 'none'
-                  }}
-                />
-              </div>
-              
-              <div>
-                <label style={{ display: 'block', color: '#94A3B8', fontSize: '13px', marginBottom: '8px' }}>Description</label>
-                <textarea
-                  value={editingDept.description || ''}
-                  onChange={(e) => setEditingDept({ ...editingDept, description: e.target.value })}
-                  rows={3}
-                  style={{
-                    width: '100%',
-                    padding: '12px 16px',
-                    background: 'rgba(15, 23, 42, 0.8)',
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    borderRadius: '8px',
-                    color: '#E2E8F0',
-                    fontSize: '14px',
-                    outline: 'none',
-                    resize: 'none'
-                  }}
-                />
-              </div>
+            <input
+              type="text"
+              placeholder="Department name"
+              value={editingDept.name}
+              onChange={(e) => setEditingDept({ ...editingDept, name: e.target.value })}
+              style={{
+                width: '100%',
+                background: 'rgba(15, 23, 42, 0.8)',
+                border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: '8px',
+                padding: '12px',
+                color: '#E2E8F0',
+                marginBottom: '12px',
+                fontSize: '14px',
+                boxSizing: 'border-box'
+              }}
+            />
+            
+            <textarea
+              placeholder="Description"
+              value={editingDept.description || ''}
+              onChange={(e) => setEditingDept({ ...editingDept, description: e.target.value })}
+              style={{
+                width: '100%',
+                background: 'rgba(15, 23, 42, 0.8)',
+                border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: '8px',
+                padding: '12px',
+                color: '#E2E8F0',
+                marginBottom: '12px',
+                fontSize: '14px',
+                minHeight: '80px',
+                resize: 'vertical',
+                boxSizing: 'border-box'
+              }}
+            />
 
-              <div style={{ display: 'flex', gap: '20px' }}>
-                <div style={{ flex: 1 }}>
-                  <label style={{ display: 'block', color: '#94A3B8', fontSize: '13px', marginBottom: '8px' }}>Icon</label>
-                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                    {iconOptions.map(icon => {
-                      const IconComp = getDeptIcon(icon);
-                      return (
-                        <button
-                          key={icon}
-                          onClick={() => setEditingDept({ ...editingDept, icon })}
-                          style={{
-                            width: '40px',
-                            height: '40px',
-                            background: editingDept.icon === icon ? 'rgba(59, 130, 246, 0.3)' : 'rgba(255,255,255,0.05)',
-                            border: editingDept.icon === icon ? '2px solid #3B82F6' : '1px solid rgba(255,255,255,0.1)',
-                            borderRadius: '8px',
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center'
-                          }}
-                        >
-                          <IconComp size={18} style={{ color: '#94A3B8' }} />
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-                
-                <div style={{ flex: 1 }}>
-                  <label style={{ display: 'block', color: '#94A3B8', fontSize: '13px', marginBottom: '8px' }}>Color</label>
-                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                    {colorOptions.map(color => (
-                      <button
-                        key={color}
-                        onClick={() => setEditingDept({ ...editingDept, color })}
-                        style={{
-                          width: '32px',
-                          height: '32px',
-                          background: color,
-                          border: editingDept.color === color ? '3px solid white' : 'none',
-                          borderRadius: '8px',
-                          cursor: 'pointer'
-                        }}
-                      />
-                    ))}
-                  </div>
-                </div>
-              </div>
-              
-              {/* Department AI Instructions */}
-              <div style={{
-                background: 'rgba(245, 158, 11, 0.1)',
-                border: '1px solid rgba(245, 158, 11, 0.2)',
-                borderRadius: '10px',
-                padding: '16px'
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-                  <FileText size={16} style={{ color: '#F59E0B' }} />
-                  <span style={{ color: '#F59E0B', fontSize: '14px', fontWeight: '500' }}>Department AI Instructions</span>
-                </div>
-                <textarea
-                  value={editingDept.instructions || ''}
-                  onChange={(e) => setEditingDept({ ...editingDept, instructions: e.target.value })}
-                  placeholder="Custom instructions for AI when chatting in this department..."
-                  rows={3}
-                  style={{
-                    width: '100%',
-                    padding: '12px',
-                    background: 'rgba(15, 23, 42, 0.8)',
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    borderRadius: '8px',
-                    color: '#E2E8F0',
-                    fontSize: '13px',
-                    outline: 'none',
-                    resize: 'none'
-                  }}
-                />
-                <p style={{ color: '#64748B', fontSize: '12px', marginTop: '8px' }}>
-                  These instructions are applied in addition to system-wide instructions when chatting in this department.
-                </p>
-              </div>
-              
-              <button
-                onClick={saveDepartmentEdit}
+            {/* Department AI Instructions */}
+            <div style={{
+              background: 'rgba(249, 115, 22, 0.1)',
+              border: '1px solid rgba(249, 115, 22, 0.2)',
+              borderRadius: '8px',
+              padding: '12px',
+              marginBottom: '12px'
+            }}>
+              <p style={{ color: '#F97316', fontSize: '13px', fontWeight: '600', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <FileText size={14} />
+                Department AI Instructions
+              </p>
+              <textarea
+                placeholder="e.g., Focus on lead conversion strategies, mention our 5-year warranty..."
+                value={editingDept.instructions || ''}
+                onChange={(e) => setEditingDept({ ...editingDept, instructions: e.target.value })}
                 style={{
-                  padding: '14px',
-                  background: 'linear-gradient(135deg, #3B82F6, #8B5CF6)',
+                  width: '100%',
+                  background: 'rgba(15, 23, 42, 0.8)',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  borderRadius: '6px',
+                  padding: '10px',
+                  color: '#E2E8F0',
+                  fontSize: '13px',
+                  minHeight: '80px',
+                  resize: 'vertical',
+                  boxSizing: 'border-box'
+                }}
+              />
+              <p style={{ color: '#94A3B8', fontSize: '11px', marginTop: '6px' }}>
+                These instructions apply only when chatting in this department
+              </p>
+            </div>
+
+            <div style={{ marginBottom: '12px' }}>
+              <p style={{ color: '#94A3B8', fontSize: '13px', marginBottom: '8px' }}>Icon</p>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                {iconOptions.map(icon => (
+                  <button
+                    key={icon}
+                    onClick={() => setEditingDept({ ...editingDept, icon })}
+                    style={{
+                      width: '40px',
+                      height: '40px',
+                      background: editingDept.icon === icon ? 'rgba(59, 130, 246, 0.3)' : 'rgba(255,255,255,0.05)',
+                      border: editingDept.icon === icon ? '2px solid #3B82F6' : '1px solid rgba(255,255,255,0.1)',
+                      borderRadius: '8px',
+                      fontSize: '20px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {icon}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ marginBottom: '20px' }}>
+              <p style={{ color: '#94A3B8', fontSize: '13px', marginBottom: '8px' }}>Color</p>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                {colorOptions.map(color => (
+                  <button
+                    key={color}
+                    onClick={() => setEditingDept({ ...editingDept, color })}
+                    style={{
+                      width: '36px',
+                      height: '36px',
+                      background: color,
+                      border: editingDept.color === color ? '3px solid white' : 'none',
+                      borderRadius: '8px',
+                      cursor: 'pointer'
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => { setShowEditModal(false); setEditingDept(null); }}
+                style={{
+                  background: 'rgba(255,255,255,0.1)',
                   border: 'none',
-                  borderRadius: '10px',
-                  cursor: 'pointer',
+                  borderRadius: '8px',
+                  padding: '10px 20px',
+                  color: '#94A3B8',
+                  cursor: 'pointer'
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleEditDept}
+                style={{
+                  background: '#3B82F6',
+                  border: 'none',
+                  borderRadius: '8px',
+                  padding: '10px 20px',
                   color: 'white',
-                  fontSize: '14px',
-                  fontWeight: '600'
+                  cursor: 'pointer'
                 }}
               >
                 Save Changes
@@ -1090,109 +1010,109 @@ export default function Knowledge({
         </div>
       )}
 
-      {/* Add Insight Modal */}
+      {/* Log Insight Modal */}
       {showInsightModal && (
         <div style={{
           position: 'fixed',
           inset: 0,
-          background: 'rgba(0,0,0,0.7)',
+          background: 'rgba(0,0,0,0.8)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           zIndex: 100
         }}>
           <div style={{
-            background: 'linear-gradient(135deg, #1E293B, #0F172A)',
+            background: '#1E293B',
             borderRadius: '16px',
-            border: '1px solid rgba(255,255,255,0.1)',
-            padding: '32px',
-            width: '100%',
-            maxWidth: '480px'
+            padding: '24px',
+            width: '450px',
+            maxWidth: '90vw'
           }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-              <h2 style={{ color: '#E2E8F0', fontSize: '20px', fontWeight: '600' }}>Log Insight</h2>
-              <button onClick={() => setShowInsightModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748B' }}>
-                <X size={20} />
-              </button>
-            </div>
+            <h2 style={{ color: '#E2E8F0', fontSize: '20px', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <Lightbulb size={24} style={{ color: '#F59E0B' }} />
+              Log Insight
+            </h2>
             
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-              <div>
-                <label style={{ display: 'block', color: '#94A3B8', fontSize: '13px', marginBottom: '8px' }}>Title</label>
-                <input
-                  type="text"
-                  value={newInsight.title}
-                  onChange={(e) => setNewInsight({ ...newInsight, title: e.target.value })}
-                  placeholder="Brief title for this insight"
-                  style={{
-                    width: '100%',
-                    padding: '12px 16px',
-                    background: 'rgba(15, 23, 42, 0.8)',
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    borderRadius: '8px',
-                    color: '#E2E8F0',
-                    fontSize: '14px',
-                    outline: 'none'
-                  }}
-                />
-              </div>
-              
-              <div>
-                <label style={{ display: 'block', color: '#94A3B8', fontSize: '13px', marginBottom: '8px' }}>Content</label>
-                <textarea
-                  value={newInsight.content}
-                  onChange={(e) => setNewInsight({ ...newInsight, content: e.target.value })}
-                  placeholder="Detailed information, learnings, or notes..."
-                  rows={5}
-                  style={{
-                    width: '100%',
-                    padding: '12px 16px',
-                    background: 'rgba(15, 23, 42, 0.8)',
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    borderRadius: '8px',
-                    color: '#E2E8F0',
-                    fontSize: '14px',
-                    outline: 'none',
-                    resize: 'none'
-                  }}
-                />
-              </div>
-              
-              <div>
-                <label style={{ display: 'block', color: '#94A3B8', fontSize: '13px', marginBottom: '8px' }}>Department</label>
-                <select
-                  value={newInsight.department}
-                  onChange={(e) => setNewInsight({ ...newInsight, department: e.target.value })}
-                  style={{
-                    width: '100%',
-                    padding: '12px 16px',
-                    background: 'rgba(15, 23, 42, 0.8)',
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    borderRadius: '8px',
-                    color: '#E2E8F0',
-                    fontSize: '14px',
-                    outline: 'none'
-                  }}
-                >
-                  <option value="">Select department...</option>
-                  {departments.map(d => (
-                    <option key={d.id} value={d.id}>{d.name}</option>
-                  ))}
-                </select>
-              </div>
-              
+            <input
+              type="text"
+              placeholder="Insight title"
+              value={newInsight.title}
+              onChange={(e) => setNewInsight({ ...newInsight, title: e.target.value })}
+              style={{
+                width: '100%',
+                background: 'rgba(15, 23, 42, 0.8)',
+                border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: '8px',
+                padding: '12px',
+                color: '#E2E8F0',
+                marginBottom: '12px',
+                fontSize: '14px',
+                boxSizing: 'border-box'
+              }}
+            />
+            
+            <textarea
+              placeholder="What did you learn? What's important to remember?"
+              value={newInsight.content}
+              onChange={(e) => setNewInsight({ ...newInsight, content: e.target.value })}
+              style={{
+                width: '100%',
+                background: 'rgba(15, 23, 42, 0.8)',
+                border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: '8px',
+                padding: '12px',
+                color: '#E2E8F0',
+                marginBottom: '12px',
+                fontSize: '14px',
+                minHeight: '120px',
+                resize: 'vertical',
+                boxSizing: 'border-box'
+              }}
+            />
+
+            <select
+              value={newInsight.department}
+              onChange={(e) => setNewInsight({ ...newInsight, department: e.target.value })}
+              style={{
+                width: '100%',
+                background: 'rgba(15, 23, 42, 0.8)',
+                border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: '8px',
+                padding: '12px',
+                color: '#E2E8F0',
+                marginBottom: '20px',
+                fontSize: '14px'
+              }}
+            >
+              <option value="">Select department</option>
+              {departments.map(d => (
+                <option key={d.id} value={d.id}>{d.name}</option>
+              ))}
+            </select>
+
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
               <button
-                onClick={addInsight}
-                disabled={!newInsight.title || !newInsight.content}
+                onClick={() => { setShowInsightModal(false); setNewInsight({ title: '', content: '', department: '' }); }}
                 style={{
-                  padding: '14px',
-                  background: (newInsight.title && newInsight.content) ? 'linear-gradient(135deg, #8B5CF6, #EC4899)' : 'rgba(255,255,255,0.1)',
+                  background: 'rgba(255,255,255,0.1)',
                   border: 'none',
-                  borderRadius: '10px',
-                  cursor: (newInsight.title && newInsight.content) ? 'pointer' : 'not-allowed',
+                  borderRadius: '8px',
+                  padding: '10px 20px',
+                  color: '#94A3B8',
+                  cursor: 'pointer'
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleAddInsight}
+                style={{
+                  background: '#F59E0B',
+                  border: 'none',
+                  borderRadius: '8px',
+                  padding: '10px 20px',
                   color: 'white',
-                  fontSize: '14px',
-                  fontWeight: '600'
+                  cursor: 'pointer'
                 }}
               >
                 Save Insight
@@ -1203,133 +1123,123 @@ export default function Knowledge({
       )}
 
       {/* Connect Google Doc Modal */}
-      {showDocModal && (
+      {showConnectDocModal && (
         <div style={{
           position: 'fixed',
           inset: 0,
-          background: 'rgba(0,0,0,0.7)',
+          background: 'rgba(0,0,0,0.8)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           zIndex: 100
         }}>
           <div style={{
-            background: 'linear-gradient(135deg, #1E293B, #0F172A)',
+            background: '#1E293B',
             borderRadius: '16px',
-            border: '1px solid rgba(255,255,255,0.1)',
-            padding: '32px',
-            width: '100%',
-            maxWidth: '520px'
+            padding: '24px',
+            width: '500px',
+            maxWidth: '90vw'
           }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <div style={{
-                  width: '40px',
-                  height: '40px',
-                  background: 'rgba(59, 130, 246, 0.2)',
-                  borderRadius: '10px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center'
-                }}>
-                  <Link size={20} style={{ color: '#3B82F6' }} />
-                </div>
-                <h2 style={{ color: '#E2E8F0', fontSize: '20px', fontWeight: '600' }}>Connect Google Doc</h2>
-              </div>
-              <button onClick={() => setShowDocModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748B' }}>
-                <X size={20} />
-              </button>
-            </div>
+            <h2 style={{ color: '#E2E8F0', fontSize: '20px', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <Link size={24} style={{ color: '#10B981' }} />
+              Connect Google Doc or Sheet
+            </h2>
+            <p style={{ color: '#94A3B8', fontSize: '14px', marginBottom: '20px' }}>
+              Connect a published Google Doc or Sheet to sync its content into Empire AI.
+            </p>
             
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-              <div>
-                <label style={{ display: 'block', color: '#94A3B8', fontSize: '13px', marginBottom: '8px' }}>Document Name</label>
-                <input
-                  type="text"
-                  value={newDoc.name}
-                  onChange={(e) => setNewDoc({ ...newDoc, name: e.target.value })}
-                  placeholder="e.g., Sales Playbook, Safety Procedures"
-                  style={{
-                    width: '100%',
-                    padding: '12px 16px',
-                    background: 'rgba(15, 23, 42, 0.8)',
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    borderRadius: '8px',
-                    color: '#E2E8F0',
-                    fontSize: '14px',
-                    outline: 'none'
-                  }}
-                />
-              </div>
-              
-              <div>
-                <label style={{ display: 'block', color: '#94A3B8', fontSize: '13px', marginBottom: '8px' }}>Published URL</label>
-                <input
-                  type="url"
-                  value={newDoc.url}
-                  onChange={(e) => setNewDoc({ ...newDoc, url: e.target.value })}
-                  placeholder="https://docs.google.com/document/d/..."
-                  style={{
-                    width: '100%',
-                    padding: '12px 16px',
-                    background: 'rgba(15, 23, 42, 0.8)',
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    borderRadius: '8px',
-                    color: '#E2E8F0',
-                    fontSize: '14px',
-                    outline: 'none'
-                  }}
-                />
-                <p style={{ color: '#64748B', fontSize: '12px', marginTop: '8px' }}>
-                  Get this from: Google Doc → File → Share → Publish to web → Copy link
-                </p>
-              </div>
-              
-              <div>
-                <label style={{ display: 'block', color: '#94A3B8', fontSize: '13px', marginBottom: '8px' }}>Department</label>
-                <select
-                  value={newDoc.department}
-                  onChange={(e) => setNewDoc({ ...newDoc, department: e.target.value })}
-                  style={{
-                    width: '100%',
-                    padding: '12px 16px',
-                    background: 'rgba(15, 23, 42, 0.8)',
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    borderRadius: '8px',
-                    color: '#E2E8F0',
-                    fontSize: '14px',
-                    outline: 'none'
-                  }}
-                >
-                  <option value="">Select department...</option>
-                  {departments.map(d => (
-                    <option key={d.id} value={d.id}>{d.name}</option>
-                  ))}
-                </select>
-              </div>
-              
-              <div style={{
-                padding: '12px 16px',
-                background: 'rgba(59, 130, 246, 0.1)',
+            <input
+              type="text"
+              placeholder="Document name (e.g., Project Schedule)"
+              value={newDoc.name}
+              onChange={(e) => setNewDoc({ ...newDoc, name: e.target.value })}
+              style={{
+                width: '100%',
+                background: 'rgba(15, 23, 42, 0.8)',
+                border: '1px solid rgba(255,255,255,0.1)',
                 borderRadius: '8px',
-                fontSize: '13px',
-                color: '#94A3B8'
-              }}>
-                <strong style={{ color: '#3B82F6' }}>Tip:</strong> You can connect docs from any Google account. Just make sure the doc is published to web.
-              </div>
-              
+                padding: '12px',
+                color: '#E2E8F0',
+                marginBottom: '12px',
+                fontSize: '14px',
+                boxSizing: 'border-box'
+              }}
+            />
+            
+            <input
+              type="text"
+              placeholder="Google Docs/Sheets URL"
+              value={newDoc.url}
+              onChange={(e) => setNewDoc({ ...newDoc, url: e.target.value })}
+              style={{
+                width: '100%',
+                background: 'rgba(15, 23, 42, 0.8)',
+                border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: '8px',
+                padding: '12px',
+                color: '#E2E8F0',
+                marginBottom: '12px',
+                fontSize: '14px',
+                boxSizing: 'border-box'
+              }}
+            />
+
+            <select
+              value={newDoc.department}
+              onChange={(e) => setNewDoc({ ...newDoc, department: e.target.value })}
+              style={{
+                width: '100%',
+                background: 'rgba(15, 23, 42, 0.8)',
+                border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: '8px',
+                padding: '12px',
+                color: '#E2E8F0',
+                marginBottom: '16px',
+                fontSize: '14px'
+              }}
+            >
+              <option value="">Select department</option>
+              {departments.map(d => (
+                <option key={d.id} value={d.id}>{d.name}</option>
+              ))}
+            </select>
+
+            <div style={{
+              background: 'rgba(59, 130, 246, 0.1)',
+              border: '1px solid rgba(59, 130, 246, 0.2)',
+              borderRadius: '8px',
+              padding: '12px',
+              marginBottom: '20px'
+            }}>
+              <p style={{ color: '#94A3B8', fontSize: '13px', margin: 0 }}>
+                <strong style={{ color: '#E2E8F0' }}>Tip:</strong> Make sure your document is shared as "Anyone with the link" or published to web. The document will sync automatically every 5 minutes.
+              </p>
+            </div>
+
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
               <button
-                onClick={addConnectedDoc}
-                disabled={!newDoc.name || !newDoc.url || !newDoc.department}
+                onClick={() => { setShowConnectDocModal(false); setNewDoc({ name: '', url: '', department: '' }); }}
                 style={{
-                  padding: '14px',
-                  background: (newDoc.name && newDoc.url && newDoc.department) ? 'linear-gradient(135deg, #3B82F6, #06B6D4)' : 'rgba(255,255,255,0.1)',
+                  background: 'rgba(255,255,255,0.1)',
                   border: 'none',
-                  borderRadius: '10px',
-                  cursor: (newDoc.name && newDoc.url && newDoc.department) ? 'pointer' : 'not-allowed',
+                  borderRadius: '8px',
+                  padding: '10px 20px',
+                  color: '#94A3B8',
+                  cursor: 'pointer'
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConnectDoc}
+                disabled={!newDoc.name.trim() || !newDoc.url.trim() || !newDoc.department}
+                style={{
+                  background: newDoc.name.trim() && newDoc.url.trim() && newDoc.department ? '#10B981' : 'rgba(16, 185, 129, 0.3)',
+                  border: 'none',
+                  borderRadius: '8px',
+                  padding: '10px 20px',
                   color: 'white',
-                  fontSize: '14px',
-                  fontWeight: '600'
+                  cursor: newDoc.name.trim() && newDoc.url.trim() && newDoc.department ? 'pointer' : 'not-allowed'
                 }}
               >
                 Connect Document
@@ -1339,7 +1249,7 @@ export default function Knowledge({
         </div>
       )}
 
-      {/* Styles */}
+      {/* Spin animation for refresh */}
       <style>{`
         @keyframes spin {
           from { transform: rotate(0deg); }
