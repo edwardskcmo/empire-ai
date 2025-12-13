@@ -395,10 +395,9 @@ export default function App() {
           {renderPage()}
         </main>
 
-        {/* Voice Modal - WITH ALL REQUIRED PROPS */}
+        {/* Voice Modal */}
         {showVoiceModal && (
           <VoiceModal 
-            isOpen={showVoiceModal}
             onClose={() => setShowVoiceModal(false)}
             activeDepartment={activeDepartment}
             systemInstructions={systemInstructions}
