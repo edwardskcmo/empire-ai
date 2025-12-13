@@ -1,310 +1,265 @@
-// ==========================================
-// EMPIRE AI - HELP PAGE
-// FAQ and documentation for team training
-// ==========================================
-
 import React, { useState } from 'react';
-import { ChevronDown, ChevronRight, HelpCircle, BookOpen } from 'lucide-react';
-
-const FAQ_DATA = [
-  {
-    section: 'Getting Started',
-    defaultOpen: true,
-    items: [
-      {
-        q: 'What is Empire AI?',
-        a: 'Empire AI is your operational intelligence platform - a central hub that connects all your business knowledge, tracks issues, and provides AI-powered assistance specific to each department.'
-      },
-      {
-        q: 'How do I start using it?',
-        a: 'Start by exploring the Dashboard for an overview, then click on any department in the sidebar to begin chatting with AI about that specific area. Upload documents to the Knowledge Base to help the AI learn about your company.'
-      },
-      {
-        q: 'Is my data secure?',
-        a: 'Yes. Your data is stored locally in your browser and our AI conversations use secure, encrypted connections. We do not share your business data with third parties.'
-      }
-    ]
-  },
-  {
-    section: 'Navigation',
-    items: [
-      {
-        q: 'What are the main sections?',
-        a: 'Dashboard (overview), Systems (settings & team), Knowledge (documents & insights), Issues (problem tracking), Help (this page), and Departments (AI chat by area).'
-      },
-      {
-        q: 'How do I switch departments?',
-        a: 'Click any department name in the sidebar under "Departments" to open a chat focused on that area. The AI will adjust its responses based on the department context.'
-      }
-    ]
-  },
-  {
-    section: 'Dashboard',
-    items: [
-      {
-        q: 'What do the dashboard stats show?',
-        a: 'Active Projects (current work), Open Issues (unresolved problems), Knowledge Items (documents & insights stored), and Team Online (active users).'
-      },
-      {
-        q: 'How do I use Quick Chat?',
-        a: 'Type a question in the chat box at the top of the dashboard and press Enter or click Ask. You\'ll be taken to the chat page with your question ready.'
-      }
-    ]
-  },
-  {
-    section: 'Knowledge Base',
-    items: [
-      {
-        q: 'How do I add documents?',
-        a: 'Go to Knowledge, find the department card, and click "Upload". You can upload PDFs, images, documents, and more. The AI will learn from these files.'
-      },
-      {
-        q: 'What is an "Insight"?',
-        a: 'Insights are manually logged pieces of knowledge - lessons learned, decisions made, or important information you want the AI to remember. Click "Log Insight" to add one.'
-      },
-      {
-        q: 'How do I organize departments?',
-        a: 'Click the menu (three dots) on any department card to Edit or Delete it. Click "+ Add Department" to create new ones with custom names, icons, and colors.'
-      }
-    ]
-  },
-  {
-    section: 'Issues Board',
-    items: [
-      {
-        q: 'How do I create an issue?',
-        a: 'Click "New Issue" button, fill in the title, description, department, priority, and assignee, then click Create.'
-      },
-      {
-        q: 'What happens when I resolve an issue?',
-        a: 'Change the status to "Resolved" using the dropdown. The issue becomes part of the AI\'s knowledge - it learns from how problems were solved.'
-      },
-      {
-        q: 'How do I archive issues?',
-        a: 'Click the archive icon on any issue row. View archived issues by clicking the "Archive" button. You can restore or permanently delete from there.'
-      }
-    ]
-  },
-  {
-    section: 'Chat / AI Assistant',
-    items: [
-      {
-        q: 'How does the AI know about my company?',
-        a: 'The AI learns from: documents you upload, insights you log, issues you resolve, and conversations you have. The more you use it, the smarter it gets.'
-      },
-      {
-        q: 'What are Custom Instructions?',
-        a: 'You can set system-wide instructions (Systems page) that apply everywhere, or department-specific instructions (edit any department) for targeted behavior.'
-      },
-      {
-        q: 'Why does it say "Thinking..."?',
-        a: 'The AI is processing your question and searching through your company knowledge to give you the best answer. Complex questions may take a few seconds.'
-      }
-    ]
-  },
-  {
-    section: 'Voice Mode',
-    items: [
-      {
-        q: 'How do I use Voice Mode?',
-        a: 'Click the green "Voice Mode" button at the bottom of the sidebar. This opens a hands-free interface where you can speak to the AI.'
-      },
-      {
-        q: 'Is Voice Mode fully functional?',
-        a: 'Voice Mode is currently in demo/preview. The visual interface is complete, but full voice API integration is coming soon.'
-      }
-    ]
-  },
-  {
-    section: 'Systems & Team',
-    items: [
-      {
-        q: 'How do I invite team members?',
-        a: 'Go to Systems > Team Management > Click "Invite". Enter their email, select a role, and optionally limit department access.'
-      },
-      {
-        q: 'What are the different roles?',
-        a: 'Owner (full access), Admin (manage team & settings), Manager (manage departments & issues), Member (view & contribute), Viewer (read-only).'
-      },
-      {
-        q: 'What is Central Intelligence?',
-        a: 'The Intelligence panel shows how much the AI has learned. It tracks all knowledge items, resolved issues, and extracts key topics (tags) automatically.'
-      }
-    ]
-  },
-  {
-    section: 'Troubleshooting',
-    items: [
-      {
-        q: 'The AI seems slow or unresponsive',
-        a: 'Check your internet connection. If the API is unavailable, the system will fall back to basic responses. Try refreshing the page.'
-      },
-      {
-        q: 'I lost my data',
-        a: 'Data is stored in your browser\'s localStorage. Clearing browser data or using incognito mode will reset everything. We recommend regular backups.'
-      },
-      {
-        q: 'Chat history is gone',
-        a: 'Each department maintains its own chat history. Make sure you\'re in the correct department. History persists until you clear browser data.'
-      }
-    ]
-  },
-  {
-    section: 'Tips for Success',
-    items: [
-      {
-        q: 'How can I get better AI responses?',
-        a: 'Upload relevant documents, log insights regularly, resolve issues with detailed notes, and set clear Custom Instructions for each department.'
-      },
-      {
-        q: 'Best practices for the Knowledge Base?',
-        a: 'Organize documents by department, use clear file names, log insights after important meetings or decisions, and keep information up to date.'
-      },
-      {
-        q: 'How should my team use this?',
-        a: 'Start each day on the Dashboard, use department chats for specific questions, log issues immediately when they arise, and share knowledge through insights.'
-      }
-    ]
-  }
-];
+import { HelpCircle, ChevronDown, ChevronRight, Book } from 'lucide-react';
 
 export default function Help() {
-  const [openSections, setOpenSections] = useState(['Getting Started']);
-  const [openItems, setOpenItems] = useState({});
+  const [openSection, setOpenSection] = useState('getting-started');
+  const [openQuestions, setOpenQuestions] = useState({});
 
-  const toggleSection = (section) => {
-    setOpenSections(prev => 
-      prev.includes(section) 
-        ? prev.filter(s => s !== section)
-        : [...prev, section]
-    );
+  const toggleSection = (sectionId) => {
+    setOpenSection(openSection === sectionId ? null : sectionId);
   };
 
-  const toggleItem = (sectionIndex, itemIndex) => {
-    const key = `${sectionIndex}-${itemIndex}`;
-    setOpenItems(prev => ({ ...prev, [key]: !prev[key] }));
+  const toggleQuestion = (questionId) => {
+    setOpenQuestions(prev => ({
+      ...prev,
+      [questionId]: !prev[questionId]
+    }));
   };
 
-  const cardStyle = {
-    background: 'rgba(30, 41, 59, 0.8)',
-    backdropFilter: 'blur(10px)',
-    borderRadius: 12,
-    border: '1px solid rgba(255,255,255,0.06)'
-  };
+  const faqSections = [
+    {
+      id: 'getting-started',
+      title: 'Getting Started',
+      questions: [
+        {
+          q: 'What is Empire AI?',
+          a: 'Empire AI is an Operational Intelligence Platform designed to be the central nervous system for Empire Remodeling. It combines AI-powered chat, knowledge management, issue tracking, and team collaboration in one unified system.'
+        },
+        {
+          q: 'How do I navigate the application?',
+          a: 'Use the sidebar on the left to navigate between pages: Dashboard (overview), Systems (settings), Knowledge (documents), Issues (task tracking), and Help (this page). Click on any department to start a conversation specific to that area.'
+        },
+        {
+          q: 'How does the AI learn about our company?',
+          a: 'Empire AI learns from multiple sources: documents you upload, insights you log, issues you resolve, and conversations you have. The Central Intelligence System automatically indexes this information and uses it to provide more relevant, company-specific responses.'
+        }
+      ]
+    },
+    {
+      id: 'chat',
+      title: 'Chat & AI Assistant',
+      questions: [
+        {
+          q: 'How do I start a conversation?',
+          a: 'Click on any department in the sidebar to open a chat specific to that area. You can also use the Quick Chat box on the Dashboard for general questions. The AI will automatically consider the department context when responding.'
+        },
+        {
+          q: 'What are Custom AI Instructions?',
+          a: 'Custom Instructions let you customize how the AI responds. System-wide instructions (in Systems page) apply to ALL conversations. Department-specific instructions (in Knowledge > Edit Department) apply only to that department. Use these to enforce company policies, preferred terminology, or specific behaviors.'
+        },
+        {
+          q: 'How does Voice Mode work?',
+          a: 'Click the green Voice Mode button in the sidebar. When the modal opens, tap the microphone and speak your question. The AI will respond both in text and speech. Works best in Chrome or Edge browsers.'
+        }
+      ]
+    },
+    {
+      id: 'knowledge',
+      title: 'Knowledge Base',
+      questions: [
+        {
+          q: 'How do I add documents?',
+          a: 'Go to Knowledge page and click the Upload button on any department card. You can upload multiple files at once. Documents are automatically indexed for the AI to reference.'
+        },
+        {
+          q: 'What is "Log Insight"?',
+          a: 'Insights are pieces of knowledge you manually add - things the AI should remember. Use this for important decisions, lessons learned, or company policies that aren\'t in a document.'
+        },
+        {
+          q: 'How do I connect Google Docs or Sheets?',
+          a: 'Click "Connect Doc" on the Knowledge page. Enter a name, paste the Google Docs/Sheets URL, and select a department. Make sure the document is shared as "Anyone with the link" or published to web. Content syncs automatically every 5 minutes.'
+        }
+      ]
+    },
+    {
+      id: 'issues',
+      title: 'Issues Board',
+      questions: [
+        {
+          q: 'How do I create an issue?',
+          a: 'Click "New Issue" on the Issues page. Fill in the title, description, department, priority, and optionally assign it to someone. Issues help track problems, tasks, and follow-ups.'
+        },
+        {
+          q: 'What happens when I resolve an issue?',
+          a: 'Resolved issues are automatically added to the Central Intelligence with a high relevance score. This means the AI can reference how similar issues were solved in the future. You can add resolution notes to capture what was done.'
+        },
+        {
+          q: 'What is the Archive?',
+          a: 'The Archive stores resolved or closed issues you want to keep for reference but don\'t need in the active view. Click the Archive button to toggle between active and archived issues. You can restore archived issues if needed.'
+        }
+      ]
+    },
+    {
+      id: 'team',
+      title: 'Team Management',
+      questions: [
+        {
+          q: 'How do I invite team members?',
+          a: 'Go to Systems page and click "Invite" in the Team Management section. Enter their email and select a role. They\'ll receive an invitation (note: email sending is not yet implemented - this is a preview feature).'
+        },
+        {
+          q: 'What are the different roles?',
+          a: 'Owner: Full access. Admin: Manage team and settings. Manager: Manage departments and issues. Member: View and contribute. Viewer: Read-only access.'
+        }
+      ]
+    },
+    {
+      id: 'troubleshooting',
+      title: 'Troubleshooting',
+      questions: [
+        {
+          q: 'The AI says it\'s having trouble connecting',
+          a: 'This usually means the API key isn\'t configured. Check Vercel environment variables to ensure ANTHROPIC_API_KEY is set correctly. You may need to redeploy after adding it.'
+        },
+        {
+          q: 'My connected Google Doc isn\'t syncing',
+          a: 'Make sure the document is shared as "Anyone with the link" (Viewer) or published to web. Try clicking the refresh icon next to the document. Check that the URL is correct.'
+        },
+        {
+          q: 'Voice mode isn\'t working',
+          a: 'Voice mode requires Chrome or Edge browser. Make sure you\'ve allowed microphone access when prompted. Check that your microphone is working in other applications.'
+        },
+        {
+          q: 'My data disappeared',
+          a: 'Data is stored in your browser\'s localStorage. If you cleared browser data or switched browsers, the data won\'t carry over. This is a limitation of the current version - a database backend is planned for the future.'
+        }
+      ]
+    }
+  ];
 
   return (
-    <div style={{ maxWidth: 900, margin: '0 auto' }}>
+    <div style={{ padding: '24px', maxWidth: '900px' }}>
       {/* Header */}
-      <div style={{ marginBottom: 24 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
-          <HelpCircle size={32} style={{ color: '#3B82F6' }} />
-          <h1 style={{ fontSize: 28, fontWeight: 700 }}>Help & FAQ</h1>
-        </div>
-        <p style={{ color: '#94A3B8' }}>Everything you need to know about using Empire AI</p>
+      <div style={{ marginBottom: '32px' }}>
+        <h1 style={{ fontSize: '28px', fontWeight: '700', color: '#E2E8F0', display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <HelpCircle size={32} style={{ color: '#10B981' }} />
+          Help & FAQ
+        </h1>
+        <p style={{ color: '#94A3B8', marginTop: '4px' }}>
+          Learn how to use Empire AI effectively
+        </p>
       </div>
 
-      {/* Quick Reference Card */}
-      <div style={{ ...cardStyle, padding: 20, marginBottom: 24, background: 'linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(139, 92, 246, 0.1))' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-          <BookOpen size={18} style={{ color: '#3B82F6' }} />
-          <h3 style={{ fontWeight: 600 }}>Quick Reference</h3>
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, fontSize: 13 }}>
+      {/* Quick Reference */}
+      <div style={{
+        background: 'rgba(59, 130, 246, 0.1)',
+        border: '1px solid rgba(59, 130, 246, 0.2)',
+        borderRadius: '12px',
+        padding: '20px',
+        marginBottom: '24px'
+      }}>
+        <h3 style={{ color: '#3B82F6', fontSize: '16px', fontWeight: '600', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <Book size={18} />
+          Quick Reference
+        </h3>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
           <div>
-            <div style={{ color: '#64748B', marginBottom: 4 }}>Start Chat</div>
-            <div style={{ color: '#E2E8F0' }}>Click any department in sidebar</div>
+            <p style={{ color: '#94A3B8', fontSize: '13px', marginBottom: '4px' }}>Start a chat</p>
+            <p style={{ color: '#E2E8F0', fontSize: '14px', margin: 0 }}>Click any department in sidebar</p>
           </div>
           <div>
-            <div style={{ color: '#64748B', marginBottom: 4 }}>Upload Files</div>
-            <div style={{ color: '#E2E8F0' }}>Knowledge → Department → Upload</div>
+            <p style={{ color: '#94A3B8', fontSize: '13px', marginBottom: '4px' }}>Voice mode</p>
+            <p style={{ color: '#E2E8F0', fontSize: '14px', margin: 0 }}>Green mic button in sidebar</p>
           </div>
           <div>
-            <div style={{ color: '#64748B', marginBottom: 4 }}>Report Issue</div>
-            <div style={{ color: '#E2E8F0' }}>Issues → New Issue button</div>
+            <p style={{ color: '#94A3B8', fontSize: '13px', marginBottom: '4px' }}>Upload document</p>
+            <p style={{ color: '#E2E8F0', fontSize: '14px', margin: 0 }}>Knowledge → Upload button</p>
           </div>
           <div>
-            <div style={{ color: '#64748B', marginBottom: 4 }}>Voice Mode</div>
-            <div style={{ color: '#E2E8F0' }}>Green button at bottom of sidebar</div>
+            <p style={{ color: '#94A3B8', fontSize: '13px', marginBottom: '4px' }}>Create issue</p>
+            <p style={{ color: '#E2E8F0', fontSize: '14px', margin: 0 }}>Issues → New Issue button</p>
           </div>
           <div>
-            <div style={{ color: '#64748B', marginBottom: 4 }}>Invite Team</div>
-            <div style={{ color: '#E2E8F0' }}>Systems → Team → Invite</div>
+            <p style={{ color: '#94A3B8', fontSize: '13px', marginBottom: '4px' }}>Connect Google Doc</p>
+            <p style={{ color: '#E2E8F0', fontSize: '14px', margin: 0 }}>Knowledge → Connect Doc</p>
           </div>
           <div>
-            <div style={{ color: '#64748B', marginBottom: 4 }}>AI Instructions</div>
-            <div style={{ color: '#E2E8F0' }}>Systems → Edit Instructions</div>
+            <p style={{ color: '#94A3B8', fontSize: '13px', marginBottom: '4px' }}>AI Instructions</p>
+            <p style={{ color: '#E2E8F0', fontSize: '14px', margin: 0 }}>Systems → AI Instructions panel</p>
           </div>
         </div>
       </div>
 
       {/* FAQ Sections */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        {FAQ_DATA.map((section, sectionIndex) => (
-          <div key={section.section} style={cardStyle}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        {faqSections.map(section => (
+          <div key={section.id} style={{
+            background: 'rgba(30, 41, 59, 0.8)',
+            borderRadius: '12px',
+            border: '1px solid rgba(255,255,255,0.06)',
+            overflow: 'hidden'
+          }}>
             {/* Section Header */}
             <button
-              onClick={() => toggleSection(section.section)}
+              onClick={() => toggleSection(section.id)}
               style={{
                 width: '100%',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
-                padding: 16,
-                background: 'transparent',
+                padding: '16px 20px',
+                background: 'none',
                 border: 'none',
                 color: '#E2E8F0',
                 cursor: 'pointer',
-                textAlign: 'left'
+                fontSize: '16px',
+                fontWeight: '600'
               }}
             >
-              <span style={{ fontWeight: 600, fontSize: 16 }}>{section.section}</span>
-              {openSections.includes(section.section) ? (
-                <ChevronDown size={20} style={{ color: '#64748B' }} />
+              {section.title}
+              {openSection === section.id ? (
+                <ChevronDown size={20} style={{ color: '#94A3B8' }} />
               ) : (
-                <ChevronRight size={20} style={{ color: '#64748B' }} />
+                <ChevronRight size={20} style={{ color: '#94A3B8' }} />
               )}
             </button>
 
-            {/* Section Items */}
-            {openSections.includes(section.section) && (
-              <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-                {section.items.map((item, itemIndex) => {
-                  const key = `${sectionIndex}-${itemIndex}`;
-                  const isOpen = openItems[key];
-                  
+            {/* Questions */}
+            {openSection === section.id && (
+              <div style={{ padding: '0 20px 16px' }}>
+                {section.questions.map((item, idx) => {
+                  const qId = `${section.id}-${idx}`;
                   return (
-                    <div key={itemIndex} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                    <div key={idx} style={{
+                      borderTop: idx === 0 ? 'none' : '1px solid rgba(255,255,255,0.06)',
+                      paddingTop: idx === 0 ? 0 : '12px',
+                      marginTop: idx === 0 ? 0 : '12px'
+                    }}>
                       <button
-                        onClick={() => toggleItem(sectionIndex, itemIndex)}
+                        onClick={() => toggleQuestion(qId)}
                         style={{
                           width: '100%',
                           display: 'flex',
-                          alignItems: 'center',
-                          gap: 12,
-                          padding: '14px 16px',
-                          background: 'transparent',
+                          alignItems: 'flex-start',
+                          justifyContent: 'space-between',
+                          padding: '8px 0',
+                          background: 'none',
                           border: 'none',
-                          color: '#CBD5E1',
+                          color: '#E2E8F0',
                           cursor: 'pointer',
-                          textAlign: 'left'
+                          fontSize: '14px',
+                          textAlign: 'left',
+                          gap: '12px'
                         }}
                       >
-                        {isOpen ? (
-                          <ChevronDown size={16} style={{ color: '#3B82F6', flexShrink: 0 }} />
+                        <span>{item.q}</span>
+                        {openQuestions[qId] ? (
+                          <ChevronDown size={16} style={{ color: '#94A3B8', flexShrink: 0, marginTop: '2px' }} />
                         ) : (
-                          <ChevronRight size={16} style={{ color: '#64748B', flexShrink: 0 }} />
+                          <ChevronRight size={16} style={{ color: '#94A3B8', flexShrink: 0, marginTop: '2px' }} />
                         )}
-                        <span style={{ fontWeight: 500 }}>{item.q}</span>
                       </button>
-                      {isOpen && (
-                        <div style={{
-                          padding: '0 16px 14px 44px',
+                      {openQuestions[qId] && (
+                        <p style={{
                           color: '#94A3B8',
-                          lineHeight: 1.6,
-                          fontSize: 14
+                          fontSize: '14px',
+                          lineHeight: '1.6',
+                          margin: '8px 0 0 0',
+                          paddingLeft: '16px',
+                          borderLeft: '2px solid rgba(59, 130, 246, 0.3)'
                         }}>
                           {item.a}
-                        </div>
+                        </p>
                       )}
                     </div>
                   );
@@ -315,9 +270,17 @@ export default function Help() {
         ))}
       </div>
 
-      {/* Support Footer */}
-      <div style={{ marginTop: 32, textAlign: 'center', color: '#64748B', fontSize: 13 }}>
-        <p>Need more help? Contact your system administrator or reach out to support.</p>
+      {/* Footer */}
+      <div style={{
+        marginTop: '32px',
+        padding: '20px',
+        background: 'rgba(30, 41, 59, 0.5)',
+        borderRadius: '12px',
+        textAlign: 'center'
+      }}>
+        <p style={{ color: '#64748B', fontSize: '14px', margin: 0 }}>
+          Need more help? Use the chat to ask Empire AI directly, or contact your administrator.
+        </p>
       </div>
     </div>
   );
