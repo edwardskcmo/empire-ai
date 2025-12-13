@@ -2,13 +2,13 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { X, Mic, MicOff, Square, Volume2, VolumeX, AlertCircle } from 'lucide-react';
 
 const VoiceModal = ({ 
-  isOpen, 
+  isOpen = true,
   onClose, 
   activeDepartment,
   systemInstructions,
   intelligenceIndex,
   queryIntelligence,
-  addActivity,
+  logActivity,
   addToIntelligence
 }) => {
   // Voice states
@@ -231,8 +231,8 @@ Department Focus: ${deptDesc}`;
         setResponse(aiResponse);
 
         // Log activity
-        if (addActivity) {
-          addActivity(`Voice conversation in ${activeDepartment?.name || 'General'}`);
+        if (logActivity) {
+          logActivity(`Voice conversation in ${activeDepartment?.name || 'General'}`);
         }
 
         // Speak the response
