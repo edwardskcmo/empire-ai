@@ -395,10 +395,15 @@ export default function App() {
           {renderPage()}
         </main>
 
-        {/* Voice Modal */}
+        {/* Voice Modal - WITH ALL REQUIRED PROPS */}
         {showVoiceModal && (
           <VoiceModal 
+            isOpen={showVoiceModal}
             onClose={() => setShowVoiceModal(false)}
+            activeDepartment={activeDepartment}
+            systemInstructions={systemInstructions}
+            intelligenceIndex={intelligenceIndex}
+            queryIntelligence={queryIntelligence}
             logActivity={logActivity}
             addToIntelligence={addToIntelligence}
           />
