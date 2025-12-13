@@ -1,272 +1,346 @@
-// ==========================================
-// VOICE MODAL - Real Voice Functionality
-// Uses Web Speech API + existing Claude API
-// ==========================================
+import React, { useState, useRef, useEffect } from 'react';
+import { X, Mic, Square, VolumeX, Volume2 } from 'lucide-react';
 
-import React, { useState, useEffect, useRef } from 'react';
-import { X, Mic, Square, Volume2, VolumeX, AlertCircle } from 'lucide-react';
-
-const VoiceModal = ({ 
-  onClose, 
+export default function VoiceModal({
+  onClose,
   activeDepartment,
   systemInstructions,
   intelligenceIndex,
   queryIntelligence,
   logActivity,
-  addToIntelligence
-}) => {
-  // State
+  addToIntelligence,
+  knowledge,
+  connectedDocs
+}) {
   const [status, setStatus] = useState('idle'); // idle, listening, processing, speaking
   const [transcript, setTranscript] = useState('');
   const [response, setResponse] = useState('');
-  const [error, setError] = useState(null);
   const [isMuted, setIsMuted] = useState(false);
-  const [isSupported, setIsSupported] = useState(true);
+  const [error, setError] = useState('');
+  const [conversationHistory, setConversationHistory] = useState([]);
   
-  // Refs
   const recognitionRef = useRef(null);
-  const transcriptRef = useRef('');
+  const synthRef = useRef(window.speechSynthesis);
+  const utteranceRef = useRef(null);
 
   // Check browser support
+  const isSupported = 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window;
+
   useEffect(() => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      setIsSupported(false);
-      setError('Voice not supported. Please use Chrome or Edge.');
+    // Initialize speech recognition
+    if (isSupported) {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      recognitionRef.current = new SpeechRecognition();
+      recognitionRef.current.continuous = false;
+      recognitionRef.current.interimResults = true;
+      recognitionRef.current.lang = 'en-US';
+
+      recognitionRef.current.onresult = (event) => {
+        let finalTranscript = '';
+        let interimTranscript = '';
+
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const transcript = event.results[i][0].transcript;
+          if (event.results[i].isFinal) {
+            finalTranscript += transcript;
+          } else {
+            interimTranscript += transcript;
+          }
+        }
+
+        if (finalTranscript) {
+          setTranscript(finalTranscript);
+          handleUserInput(finalTranscript);
+        } else {
+          setTranscript(interimTranscript);
+        }
+      };
+
+      recognitionRef.current.onerror = (event) => {
+        console.error('Speech recognition error:', event.error);
+        if (event.error === 'no-speech') {
+          setError('No speech detected. Tap the mic to try again.');
+        } else if (event.error === 'audio-capture') {
+          setError('No microphone found. Please check your mic.');
+        } else if (event.error === 'not-allowed') {
+          setError('Microphone access denied. Please allow access in browser settings.');
+        } else {
+          setError(`Error: ${event.error}`);
+        }
+        setStatus('idle');
+      };
+
+      recognitionRef.current.onend = () => {
+        // Only reset to idle if we're still in listening mode (not processing)
+        if (status === 'listening') {
+          setStatus('idle');
+        }
+      };
     }
-    
-    // Cleanup on unmount
+
     return () => {
       if (recognitionRef.current) {
-        try { recognitionRef.current.stop(); } catch (e) {}
+        recognitionRef.current.abort();
       }
-      if (window.speechSynthesis) {
-        window.speechSynthesis.cancel();
+      if (synthRef.current) {
+        synthRef.current.cancel();
       }
     };
   }, []);
 
-  // Build context for AI
-  const buildContext = (query) => {
-    if (!queryIntelligence || !intelligenceIndex) return '';
+  const buildKnowledgeContext = (query) => {
+    let context = '';
     
-    try {
-      const deptName = activeDepartment?.name || 'General';
-      const relevant = queryIntelligence(intelligenceIndex, query, deptName);
-      
-      if (!relevant || relevant.length === 0) return '';
-      
-      let context = '\n\nRelevant company knowledge:\n';
-      relevant.slice(0, 3).forEach((item, i) => {
-        context += `${i + 1}. ${item.title}: ${item.content?.substring(0, 150) || ''}...\n`;
-      });
-      return context;
-    } catch (e) {
-      console.error('Context build error:', e);
-      return '';
+    // Get relevant items from intelligence
+    if (queryIntelligence && intelligenceIndex) {
+      const relevant = queryIntelligence(intelligenceIndex, query, activeDepartment?.id);
+      if (relevant && relevant.length > 0) {
+        context += '\n\nRelevant company knowledge:\n';
+        relevant.slice(0, 5).forEach((item, i) => {
+          const label = item.sourceType === 'knowledge' ? 'Knowledge' : 
+                       item.sourceType === 'resolved_issue' ? 'Resolved Issue' :
+                       item.sourceType === 'google_doc' ? 'Connected Doc' : 'Info';
+          context += `${i + 1}. [${label}] ${item.title}: ${item.content?.substring(0, 300)}...\n`;
+        });
+      }
     }
+
+    // Include connected docs/sheets content
+    if (connectedDocs && connectedDocs.length > 0) {
+      const syncedDocs = connectedDocs.filter(d => d.status === 'synced' && d.content);
+      if (syncedDocs.length > 0) {
+        context += '\n\nConnected Google Docs/Sheets data:\n';
+        syncedDocs.forEach((doc, i) => {
+          // Include first 1000 chars of each synced doc
+          context += `\n--- ${doc.name} (${doc.department || 'General'}) ---\n`;
+          context += doc.content?.substring(0, 1000) + (doc.content?.length > 1000 ? '...' : '') + '\n';
+        });
+      }
+    }
+
+    // Include relevant knowledge items
+    if (knowledge && knowledge.length > 0) {
+      const deptKnowledge = activeDepartment 
+        ? knowledge.filter(k => k.department === activeDepartment.id || k.department === 'company-wide')
+        : knowledge;
+      
+      if (deptKnowledge.length > 0 && !context.includes('Knowledge')) {
+        context += '\n\nKnowledge base items:\n';
+        deptKnowledge.slice(0, 3).forEach((item, i) => {
+          context += `${i + 1}. ${item.title}: ${item.content?.substring(0, 200)}...\n`;
+        });
+      }
+    }
+
+    return context;
   };
 
-  // Send to AI
-  const sendToAI = async (message) => {
-    const deptName = activeDepartment?.name || 'General';
-    const deptDesc = activeDepartment?.description || '';
-    const deptInstructions = activeDepartment?.instructions || '';
+  const handleUserInput = async (text) => {
+    if (!text.trim()) return;
     
-    let systemPrompt = `You are Empire AI, the assistant for Empire Remodeling. 
-VOICE MODE: Keep responses brief (2-3 sentences max).
-Department: ${deptName}
-Focus: ${deptDesc}`;
+    setStatus('processing');
+    setError('');
+
+    // Build context including connected sheets/docs
+    const knowledgeContext = buildKnowledgeContext(text);
+
+    // Build system prompt
+    let systemPrompt = `You are Empire AI, the operational intelligence assistant for Empire Remodeling. You are having a voice conversation, so keep responses conversational and concise (2-4 sentences unless more detail is needed). Be helpful and reference company data when relevant.`;
+
+    if (activeDepartment) {
+      systemPrompt += `\n\nCurrent Department: ${activeDepartment.name}`;
+      if (activeDepartment.description) {
+        systemPrompt += `\nDepartment Focus: ${activeDepartment.description}`;
+      }
+      if (activeDepartment.instructions) {
+        systemPrompt += `\n\nDepartment Instructions: ${activeDepartment.instructions}`;
+      }
+    }
 
     if (systemInstructions) {
-      systemPrompt += `\n\nSystem Instructions: ${systemInstructions}`;
-    }
-    
-    if (deptInstructions) {
-      systemPrompt += `\n\nDepartment Instructions: ${deptInstructions}`;
+      systemPrompt += `\n\nSystem-wide Instructions: ${systemInstructions}`;
     }
 
-    const context = buildContext(message);
-    if (context) {
-      systemPrompt += context;
+    if (knowledgeContext) {
+      systemPrompt += knowledgeContext;
     }
+
+    // Add conversation history for context
+    const historyForAPI = conversationHistory.slice(-6).map(msg => ({
+      role: msg.role,
+      content: msg.content
+    }));
 
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message,
+          message: text,
           systemPrompt,
-          conversationHistory: []
+          conversationHistory: historyForAPI
         })
       });
 
-      if (!res.ok) throw new Error('API error');
-      
+      if (!res.ok) {
+        throw new Error(`API error: ${res.status}`);
+      }
+
       const data = await res.json();
-      return data.response || "I couldn't process that. Please try again.";
+      const aiResponse = data.response || "I'm sorry, I couldn't process that request.";
+
+      setResponse(aiResponse);
+      
+      // Update conversation history
+      setConversationHistory(prev => [
+        ...prev,
+        { role: 'user', content: text },
+        { role: 'assistant', content: aiResponse }
+      ]);
+
+      // Log to intelligence
+      if (addToIntelligence) {
+        addToIntelligence({
+          sourceType: 'voice_interaction',
+          sourceId: `voice_${Date.now()}`,
+          title: `Voice: ${text.substring(0, 50)}...`,
+          content: `Q: ${text}\nA: ${aiResponse}`,
+          department: activeDepartment?.id || 'general',
+          tags: ['voice', 'query'],
+          metadata: { type: 'voice' },
+          relevanceBoost: 1
+        });
+      }
+
+      // Log activity
+      if (logActivity) {
+        logActivity(`Voice conversation in ${activeDepartment?.name || 'General'}`, 'voice');
+      }
+
+      // Speak the response
+      if (!isMuted) {
+        speakResponse(aiResponse);
+      } else {
+        setStatus('idle');
+      }
+
     } catch (err) {
-      console.error('AI error:', err);
-      return "I'm having trouble connecting. Please try the chat interface instead.";
+      console.error('Voice API error:', err);
+      setError('Having trouble connecting. Please try again.');
+      setResponse('');
+      setStatus('idle');
     }
   };
 
-  // Speak response
-  const speak = (text) => {
-    if (isMuted || !text || !window.speechSynthesis) {
+  const speakResponse = (text) => {
+    setStatus('speaking');
+    
+    // Cancel any ongoing speech
+    synthRef.current.cancel();
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 1.0;
+    utterance.pitch = 1.0;
+    utterance.volume = 1.0;
+
+    // Try to get a natural voice
+    const voices = synthRef.current.getVoices();
+    const preferredVoice = voices.find(v => 
+      v.name.includes('Samantha') || 
+      v.name.includes('Google') || 
+      v.name.includes('Natural') ||
+      v.lang.startsWith('en')
+    );
+    if (preferredVoice) {
+      utterance.voice = preferredVoice;
+    }
+
+    utterance.onend = () => {
       setStatus('idle');
+      // Auto-start listening again for continuous conversation
+      setTimeout(() => {
+        if (status !== 'idle') return; // Prevent double-start
+        startListening();
+      }, 500);
+    };
+
+    utterance.onerror = (e) => {
+      console.error('Speech synthesis error:', e);
+      setStatus('idle');
+    };
+
+    utteranceRef.current = utterance;
+    synthRef.current.speak(utterance);
+  };
+
+  const startListening = () => {
+    if (!isSupported) {
+      setError('Speech recognition not supported in this browser. Please use Chrome or Edge.');
       return;
     }
 
-    try {
-      window.speechSynthesis.cancel();
-      setStatus('speaking');
-      
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.rate = 1.0;
-      utterance.pitch = 1.0;
-      
-      utterance.onend = () => setStatus('idle');
-      utterance.onerror = () => setStatus('idle');
-      
-      window.speechSynthesis.speak(utterance);
-    } catch (e) {
-      console.error('Speech error:', e);
-      setStatus('idle');
-    }
-  };
-
-  // Start listening
-  const startListening = () => {
-    if (!isSupported) return;
-    
-    setError(null);
+    setError('');
     setTranscript('');
-    setResponse('');
-    transcriptRef.current = '';
-    
+    setStatus('listening');
+
     try {
-      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-      const recognition = new SpeechRecognition();
-      
-      recognition.continuous = false;
-      recognition.interimResults = true;
-      recognition.lang = 'en-US';
-
-      recognition.onstart = () => {
-        setStatus('listening');
-      };
-
-      recognition.onresult = (event) => {
-        let finalText = '';
-        let interimText = '';
-
-        for (let i = 0; i < event.results.length; i++) {
-          const result = event.results[i];
-          if (result.isFinal) {
-            finalText += result[0].transcript;
-          } else {
-            interimText += result[0].transcript;
-          }
-        }
-
-        const currentText = finalText || interimText;
-        transcriptRef.current = currentText;
-        setTranscript(currentText);
-      };
-
-      recognition.onend = async () => {
-        const spokenText = transcriptRef.current.trim();
-        
-        if (spokenText.length > 0) {
-          setStatus('processing');
-          
-          // Log to intelligence
-          if (addToIntelligence) {
-            try {
-              addToIntelligence(
-                'voice_interaction',
-                `voice_${Date.now()}`,
-                'Voice Query',
-                spokenText,
-                activeDepartment?.name || 'General',
-                {},
-                1
-              );
-            } catch (e) {}
-          }
-
-          // Get AI response
-          const aiResponse = await sendToAI(spokenText);
-          setResponse(aiResponse);
-
-          // Log activity
-          if (logActivity) {
-            try {
-              logActivity(`Voice: ${spokenText.substring(0, 50)}...`);
-            } catch (e) {}
-          }
-
-          // Speak it
-          speak(aiResponse);
-        } else {
-          setStatus('idle');
-          setError('No speech detected. Try again.');
-        }
-      };
-
-      recognition.onerror = (event) => {
-        console.error('Recognition error:', event.error);
-        setStatus('idle');
-        
-        if (event.error === 'no-speech') {
-          setError('No speech detected. Please try again.');
-        } else if (event.error === 'audio-capture') {
-          setError('No microphone found.');
-        } else if (event.error === 'not-allowed') {
-          setError('Microphone access denied. Please allow access.');
-        } else {
-          setError('Voice error. Please try again.');
-        }
-      };
-
-      recognitionRef.current = recognition;
-      recognition.start();
+      recognitionRef.current.start();
     } catch (e) {
-      console.error('Start error:', e);
-      setError('Could not start voice. Try refreshing.');
-      setStatus('idle');
+      // Already started, ignore
+      console.log('Recognition already active');
     }
   };
 
-  // Stop everything
   const stopAll = () => {
     if (recognitionRef.current) {
-      try { recognitionRef.current.stop(); } catch (e) {}
+      recognitionRef.current.abort();
     }
-    if (window.speechSynthesis) {
-      window.speechSynthesis.cancel();
+    if (synthRef.current) {
+      synthRef.current.cancel();
     }
     setStatus('idle');
   };
 
-  // Main button handler
-  const handleMainButton = () => {
-    if (status === 'idle') {
-      startListening();
-    } else {
-      stopAll();
-    }
-  };
+  const getOrbStyle = () => {
+    const baseStyle = {
+      width: '200px',
+      height: '200px',
+      borderRadius: '50%',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      transition: 'all 0.3s ease',
+      position: 'relative'
+    };
 
-  // Get orb color
-  const getOrbColor = () => {
     switch (status) {
-      case 'listening': return 'linear-gradient(135deg, #10B981, #059669)';
-      case 'processing': return 'linear-gradient(135deg, #F59E0B, #D97706)';
-      case 'speaking': return 'linear-gradient(135deg, #8B5CF6, #7C3AED)';
-      default: return 'linear-gradient(135deg, #3B82F6, #2563EB)';
+      case 'listening':
+        return {
+          ...baseStyle,
+          background: 'radial-gradient(circle, #10B981 0%, #059669 50%, #047857 100%)',
+          boxShadow: '0 0 60px rgba(16, 185, 129, 0.6)',
+          animation: 'pulse 1.5s ease-in-out infinite'
+        };
+      case 'processing':
+        return {
+          ...baseStyle,
+          background: 'radial-gradient(circle, #F59E0B 0%, #D97706 50%, #B45309 100%)',
+          boxShadow: '0 0 60px rgba(245, 158, 11, 0.6)',
+          animation: 'spin 2s linear infinite'
+        };
+      case 'speaking':
+        return {
+          ...baseStyle,
+          background: 'radial-gradient(circle, #8B5CF6 0%, #7C3AED 50%, #6D28D9 100%)',
+          boxShadow: '0 0 60px rgba(139, 92, 246, 0.6)',
+          animation: 'pulse 1s ease-in-out infinite'
+        };
+      default:
+        return {
+          ...baseStyle,
+          background: 'radial-gradient(circle, #3B82F6 0%, #2563EB 50%, #1D4ED8 100%)',
+          boxShadow: '0 0 40px rgba(59, 130, 246, 0.4)'
+        };
     }
   };
 
@@ -275,24 +349,21 @@ Focus: ${deptDesc}`;
       case 'listening': return 'Listening...';
       case 'processing': return 'Thinking...';
       case 'speaking': return 'Speaking...';
-      default: return 'Tap to speak';
+      default: return 'Tap microphone to start';
     }
   };
 
-  // ==========================================
-  // RENDER
-  // ==========================================
   return (
     <div style={{
       position: 'fixed',
       inset: 0,
-      background: 'rgba(0,0,0,0.9)',
-      backdropFilter: 'blur(20px)',
+      background: 'rgba(0, 0, 0, 0.9)',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
       zIndex: 1000
     }}>
+      {/* CSS Animations */}
       <style>{`
         @keyframes pulse {
           0%, 100% { transform: scale(1); }
@@ -307,209 +378,171 @@ Focus: ${deptDesc}`;
       <div style={{
         background: 'rgba(30, 41, 59, 0.95)',
         borderRadius: '24px',
-        border: '1px solid rgba(255,255,255,0.1)',
         padding: '40px',
-        width: '480px',
+        width: '500px',
         maxWidth: '90vw',
-        textAlign: 'center',
-        position: 'relative'
+        border: '1px solid rgba(255,255,255,0.1)',
+        backdropFilter: 'blur(20px)'
       }}>
-        {/* Close */}
-        <button
-          onClick={onClose}
-          style={{
-            position: 'absolute',
-            top: '16px',
-            right: '16px',
-            background: 'rgba(255,255,255,0.1)',
-            border: 'none',
-            borderRadius: '50%',
-            width: '40px',
-            height: '40px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            cursor: 'pointer',
-            color: '#94A3B8'
-          }}
-        >
-          <X size={20} />
-        </button>
-
         {/* Header */}
-        <div style={{ marginBottom: '8px', fontSize: '13px', color: '#64748B' }}>
-          Voice Mode
-        </div>
-        <h2 style={{ fontSize: '22px', fontWeight: '700', marginBottom: '24px', color: '#E2E8F0' }}>
-          {activeDepartment?.name || 'Empire AI'}
-        </h2>
-
-        {/* Browser Warning */}
-        {!isSupported && (
-          <div style={{
-            background: 'rgba(239,68,68,0.1)',
-            border: '1px solid rgba(239,68,68,0.3)',
-            borderRadius: '12px',
-            padding: '16px',
-            marginBottom: '20px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '12px'
-          }}>
-            <AlertCircle size={24} color="#EF4444" />
-            <div style={{ textAlign: 'left', fontSize: '14px', color: '#EF4444' }}>
-              Please use Chrome or Edge for voice features.
-            </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+          <div>
+            <h2 style={{ color: '#E2E8F0', fontSize: '24px', fontWeight: '700', margin: 0 }}>
+              Voice Mode
+            </h2>
+            <p style={{ color: '#94A3B8', fontSize: '14px', margin: '4px 0 0 0' }}>
+              {activeDepartment?.name || 'General'} Assistant
+            </p>
           </div>
-        )}
+          <button
+            onClick={onClose}
+            style={{
+              background: 'rgba(255,255,255,0.1)',
+              border: 'none',
+              borderRadius: '8px',
+              padding: '8px',
+              cursor: 'pointer',
+              color: '#94A3B8'
+            }}
+          >
+            <X size={24} />
+          </button>
+        </div>
+
+        {/* Orb */}
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '24px' }}>
+          <div style={getOrbStyle()}>
+            <Mic size={60} style={{ color: 'white', opacity: 0.9 }} />
+          </div>
+        </div>
+
+        {/* Status */}
+        <p style={{ textAlign: 'center', color: '#E2E8F0', fontSize: '18px', marginBottom: '20px' }}>
+          {getStatusText()}
+        </p>
 
         {/* Error */}
         {error && (
           <div style={{
-            background: 'rgba(245,158,11,0.1)',
-            borderRadius: '10px',
+            background: 'rgba(239, 68, 68, 0.1)',
+            border: '1px solid rgba(239, 68, 68, 0.3)',
+            borderRadius: '8px',
             padding: '12px',
-            marginBottom: '20px',
+            marginBottom: '16px',
+            color: '#FCA5A5',
             fontSize: '14px',
-            color: '#F59E0B'
+            textAlign: 'center'
           }}>
             {error}
           </div>
         )}
 
-        {/* Orb */}
-        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '24px' }}>
-          <div style={{
-            width: '160px',
-            height: '160px',
-            borderRadius: '50%',
-            background: getOrbColor(),
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            boxShadow: status !== 'idle' ? '0 0 40px rgba(59,130,246,0.3)' : 'none',
-            animation: status === 'listening' || status === 'speaking' ? 'pulse 1.5s ease-in-out infinite' : 'none',
-            transition: 'all 0.3s ease'
-          }}>
-            {status === 'processing' ? (
-              <div style={{
-                width: '40px',
-                height: '40px',
-                border: '3px solid rgba(255,255,255,0.3)',
-                borderTopColor: '#fff',
-                borderRadius: '50%',
-                animation: 'spin 1s linear infinite'
-              }} />
-            ) : (
-              <Mic size={48} color="#fff" />
-            )}
-          </div>
-        </div>
-
-        {/* Status */}
-        <div style={{ 
-          fontSize: '16px', 
-          fontWeight: '600', 
-          marginBottom: '20px',
-          color: status === 'listening' ? '#10B981' : 
-                 status === 'processing' ? '#F59E0B' : 
-                 status === 'speaking' ? '#8B5CF6' : '#64748B'
-        }}>
-          {getStatusText()}
-        </div>
-
         {/* Transcript */}
         {transcript && (
           <div style={{
-            background: 'rgba(59,130,246,0.1)',
-            borderRadius: '10px',
-            padding: '14px',
-            marginBottom: '12px',
-            textAlign: 'left'
+            background: 'rgba(16, 185, 129, 0.1)',
+            borderRadius: '8px',
+            padding: '12px',
+            marginBottom: '16px'
           }}>
-            <div style={{ fontSize: '11px', color: '#64748B', marginBottom: '4px', textTransform: 'uppercase' }}>
-              You said
-            </div>
-            <div style={{ fontSize: '14px', color: '#E2E8F0' }}>{transcript}</div>
+            <p style={{ color: '#6EE7B7', fontSize: '12px', marginBottom: '4px' }}>You said:</p>
+            <p style={{ color: '#E2E8F0', fontSize: '14px', margin: 0 }}>{transcript}</p>
           </div>
         )}
 
         {/* Response */}
         {response && (
           <div style={{
-            background: 'rgba(139,92,246,0.1)',
-            borderRadius: '10px',
-            padding: '14px',
-            marginBottom: '20px',
-            textAlign: 'left'
+            background: 'rgba(139, 92, 246, 0.1)',
+            borderRadius: '8px',
+            padding: '12px',
+            marginBottom: '16px',
+            maxHeight: '150px',
+            overflowY: 'auto'
           }}>
-            <div style={{ fontSize: '11px', color: '#64748B', marginBottom: '4px', textTransform: 'uppercase' }}>
-              Empire AI
-            </div>
-            <div style={{ fontSize: '14px', color: '#E2E8F0', lineHeight: '1.5' }}>{response}</div>
+            <p style={{ color: '#A78BFA', fontSize: '12px', marginBottom: '4px' }}>Empire AI:</p>
+            <p style={{ color: '#E2E8F0', fontSize: '14px', margin: 0 }}>{response}</p>
           </div>
         )}
 
         {/* Controls */}
-        <div style={{ display: 'flex', justifyContent: 'center', gap: '16px', alignItems: 'center' }}>
-          {/* Main Button */}
-          <button
-            onClick={handleMainButton}
-            disabled={!isSupported}
-            style={{
-              width: '64px',
-              height: '64px',
-              borderRadius: '50%',
-              background: status === 'idle' 
-                ? 'linear-gradient(135deg, #10B981, #059669)' 
-                : 'linear-gradient(135deg, #EF4444, #DC2626)',
-              border: 'none',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              cursor: isSupported ? 'pointer' : 'not-allowed',
-              opacity: isSupported ? 1 : 0.5,
-              boxShadow: '0 4px 15px rgba(0,0,0,0.3)'
-            }}
-          >
-            {status === 'idle' ? <Mic size={26} color="#fff" /> : <Square size={22} color="#fff" />}
-          </button>
+        <div style={{ display: 'flex', justifyContent: 'center', gap: '16px' }}>
+          {status === 'idle' ? (
+            <button
+              onClick={startListening}
+              style={{
+                background: '#10B981',
+                border: 'none',
+                borderRadius: '50%',
+                width: '64px',
+                height: '64px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                boxShadow: '0 4px 20px rgba(16, 185, 129, 0.4)'
+              }}
+            >
+              <Mic size={28} style={{ color: 'white' }} />
+            </button>
+          ) : (
+            <button
+              onClick={stopAll}
+              style={{
+                background: '#EF4444',
+                border: 'none',
+                borderRadius: '50%',
+                width: '64px',
+                height: '64px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                boxShadow: '0 4px 20px rgba(239, 68, 68, 0.4)'
+              }}
+            >
+              <Square size={24} style={{ color: 'white' }} />
+            </button>
+          )}
 
-          {/* Mute */}
+          {/* Mute Toggle */}
           <button
-            onClick={() => {
-              setIsMuted(!isMuted);
-              if (!isMuted && status === 'speaking') {
-                window.speechSynthesis?.cancel();
-                setStatus('idle');
-              }
-            }}
+            onClick={() => setIsMuted(!isMuted)}
             style={{
-              width: '44px',
-              height: '44px',
+              background: isMuted ? 'rgba(239, 68, 68, 0.2)' : 'rgba(255,255,255,0.1)',
+              border: '1px solid ' + (isMuted ? 'rgba(239, 68, 68, 0.5)' : 'rgba(255,255,255,0.2)'),
               borderRadius: '50%',
-              background: isMuted ? 'rgba(239,68,68,0.2)' : 'rgba(255,255,255,0.1)',
-              border: 'none',
+              width: '48px',
+              height: '48px',
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center'
             }}
+            title={isMuted ? 'Unmute responses' : 'Mute responses'}
           >
-            {isMuted ? <VolumeX size={18} color="#EF4444" /> : <Volume2 size={18} color="#E2E8F0" />}
+            {isMuted ? (
+              <VolumeX size={20} style={{ color: '#EF4444' }} />
+            ) : (
+              <Volume2 size={20} style={{ color: '#94A3B8' }} />
+            )}
           </button>
         </div>
 
-        {/* Hint */}
-        <div style={{ marginTop: '20px', fontSize: '13px', color: '#64748B' }}>
-          {status === 'idle' && 'Tap microphone to start'}
-          {status === 'listening' && 'Speak clearly, then pause'}
-          {status === 'processing' && 'Processing...'}
-          {status === 'speaking' && 'Tap stop to interrupt'}
-        </div>
+        {/* Browser Support Notice */}
+        {!isSupported && (
+          <p style={{ color: '#F59E0B', fontSize: '12px', textAlign: 'center', marginTop: '16px' }}>
+            Voice recognition requires Chrome or Edge browser
+          </p>
+        )}
+
+        {/* Conversation indicator */}
+        {conversationHistory.length > 0 && (
+          <p style={{ color: '#64748B', fontSize: '12px', textAlign: 'center', marginTop: '16px' }}>
+            {Math.floor(conversationHistory.length / 2)} exchanges in this session
+          </p>
+        )}
       </div>
     </div>
   );
-};
-
-export default VoiceModal;
+}
