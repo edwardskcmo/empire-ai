@@ -1,8 +1,12 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Mic, MicOff, Square, Volume2, VolumeX, AlertCircle } from 'lucide-react';
+// ==========================================
+// VOICE MODAL - Real Voice Functionality
+// Uses Web Speech API + existing Claude API
+// ==========================================
+
+import React, { useState, useEffect, useRef } from 'react';
+import { X, Mic, Square, Volume2, VolumeX, AlertCircle } from 'lucide-react';
 
 const VoiceModal = ({ 
-  isOpen = true,
   onClose, 
   activeDepartment,
   systemInstructions,
@@ -11,95 +15,81 @@ const VoiceModal = ({
   logActivity,
   addToIntelligence
 }) => {
-  // Voice states
-  const [voiceStatus, setVoiceStatus] = useState('idle'); // idle, listening, processing, speaking
+  // State
+  const [status, setStatus] = useState('idle'); // idle, listening, processing, speaking
   const [transcript, setTranscript] = useState('');
   const [response, setResponse] = useState('');
-  const [isMuted, setIsMuted] = useState(false);
   const [error, setError] = useState(null);
+  const [isMuted, setIsMuted] = useState(false);
   const [isSupported, setIsSupported] = useState(true);
   
   // Refs
   const recognitionRef = useRef(null);
-  const synthRef = useRef(window.speechSynthesis);
-  const utteranceRef = useRef(null);
+  const transcriptRef = useRef('');
 
-  // Check browser support on mount
+  // Check browser support
   useEffect(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
       setIsSupported(false);
-      setError('Voice recognition not supported in this browser. Please use Chrome or Edge.');
+      setError('Voice not supported. Please use Chrome or Edge.');
     }
-  }, []);
-
-  // Cleanup on unmount or close
-  useEffect(() => {
+    
+    // Cleanup on unmount
     return () => {
-      stopListening();
-      stopSpeaking();
+      if (recognitionRef.current) {
+        try { recognitionRef.current.stop(); } catch (e) {}
+      }
+      if (window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+      }
     };
   }, []);
 
-  // Reset state when modal opens
-  useEffect(() => {
-    if (isOpen) {
-      setVoiceStatus('idle');
-      setTranscript('');
-      setResponse('');
-      setError(null);
-    } else {
-      stopListening();
-      stopSpeaking();
-    }
-  }, [isOpen]);
-
-  // Build intelligence context for AI
-  const buildIntelligenceContext = useCallback((query) => {
+  // Build context for AI
+  const buildContext = (query) => {
     if (!queryIntelligence || !intelligenceIndex) return '';
     
-    const deptName = activeDepartment?.name || 'General';
-    const relevant = queryIntelligence(intelligenceIndex, query, deptName);
-    
-    if (relevant.length === 0) return '';
-    
-    let context = '\n\nRelevant company knowledge:\n';
-    relevant.slice(0, 5).forEach((item, i) => {
-      const label = item.sourceType === 'knowledge' ? 'Knowledge Base' :
-                    item.sourceType === 'resolved_issue' ? 'Resolved Issue' :
-                    item.sourceType === 'chat_query' ? 'Previous Discussion' : 'Reference';
-      context += `${i + 1}. [${label}] ${item.title}: ${item.content.substring(0, 200)}...\n`;
-    });
-    
-    return context;
-  }, [queryIntelligence, intelligenceIndex, activeDepartment]);
+    try {
+      const deptName = activeDepartment?.name || 'General';
+      const relevant = queryIntelligence(intelligenceIndex, query, deptName);
+      
+      if (!relevant || relevant.length === 0) return '';
+      
+      let context = '\n\nRelevant company knowledge:\n';
+      relevant.slice(0, 3).forEach((item, i) => {
+        context += `${i + 1}. ${item.title}: ${item.content?.substring(0, 150) || ''}...\n`;
+      });
+      return context;
+    } catch (e) {
+      console.error('Context build error:', e);
+      return '';
+    }
+  };
 
-  // Send message to AI
+  // Send to AI
   const sendToAI = async (message) => {
     const deptName = activeDepartment?.name || 'General';
     const deptDesc = activeDepartment?.description || '';
     const deptInstructions = activeDepartment?.instructions || '';
     
-    // Build system prompt
-    let systemPrompt = `You are Empire AI, the operational intelligence assistant for Empire Remodeling. 
-You are currently in VOICE MODE - keep responses concise and conversational (2-3 sentences max unless more detail is requested).
-Current Department: ${deptName}
-Department Focus: ${deptDesc}`;
+    let systemPrompt = `You are Empire AI, the assistant for Empire Remodeling. 
+VOICE MODE: Keep responses brief (2-3 sentences max).
+Department: ${deptName}
+Focus: ${deptDesc}`;
 
-    if (systemInstructions?.trim()) {
-      systemPrompt += `\n\n=== SYSTEM-WIDE INSTRUCTIONS ===\n${systemInstructions}`;
+    if (systemInstructions) {
+      systemPrompt += `\n\nSystem Instructions: ${systemInstructions}`;
     }
     
-    if (deptInstructions?.trim()) {
-      systemPrompt += `\n\n=== ${deptName} DEPARTMENT INSTRUCTIONS ===\n${deptInstructions}`;
+    if (deptInstructions) {
+      systemPrompt += `\n\nDepartment Instructions: ${deptInstructions}`;
     }
 
-    const intelligenceContext = buildIntelligenceContext(message);
-    if (intelligenceContext) {
-      systemPrompt += intelligenceContext;
+    const context = buildContext(message);
+    if (context) {
+      systemPrompt += context;
     }
-
-    systemPrompt += `\n\nRespond naturally and helpfully. Remember: this is voice mode, so be brief and clear.`;
 
     try {
       const res = await fetch('/api/chat', {
@@ -112,231 +102,176 @@ Department Focus: ${deptDesc}`;
         })
       });
 
-      if (!res.ok) {
-        throw new Error('API request failed');
-      }
-
+      if (!res.ok) throw new Error('API error');
+      
       const data = await res.json();
-      return data.response;
+      return data.response || "I couldn't process that. Please try again.";
     } catch (err) {
-      console.error('Voice AI error:', err);
-      return "I'm having trouble connecting right now. Please try again or use the chat interface.";
+      console.error('AI error:', err);
+      return "I'm having trouble connecting. Please try the chat interface instead.";
     }
   };
 
-  // Text to Speech
-  const speak = useCallback((text) => {
-    if (isMuted || !text) {
-      setVoiceStatus('idle');
+  // Speak response
+  const speak = (text) => {
+    if (isMuted || !text || !window.speechSynthesis) {
+      setStatus('idle');
       return;
     }
 
-    stopSpeaking();
-    setVoiceStatus('speaking');
-
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 1.0;
-    utterance.pitch = 1.0;
-    utterance.volume = 1.0;
-
-    // Try to get a natural voice
-    const voices = synthRef.current.getVoices();
-    const preferredVoice = voices.find(v => 
-      v.name.includes('Google') || 
-      v.name.includes('Natural') || 
-      v.name.includes('Samantha') ||
-      v.lang.startsWith('en')
-    );
-    if (preferredVoice) {
-      utterance.voice = preferredVoice;
-    }
-
-    utterance.onend = () => {
-      setVoiceStatus('idle');
-    };
-
-    utterance.onerror = (e) => {
+    try {
+      window.speechSynthesis.cancel();
+      setStatus('speaking');
+      
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = 1.0;
+      utterance.pitch = 1.0;
+      
+      utterance.onend = () => setStatus('idle');
+      utterance.onerror = () => setStatus('idle');
+      
+      window.speechSynthesis.speak(utterance);
+    } catch (e) {
       console.error('Speech error:', e);
-      setVoiceStatus('idle');
-    };
-
-    utteranceRef.current = utterance;
-    synthRef.current.speak(utterance);
-  }, [isMuted]);
-
-  // Stop speaking
-  const stopSpeaking = useCallback(() => {
-    if (synthRef.current.speaking) {
-      synthRef.current.cancel();
+      setStatus('idle');
     }
-  }, []);
+  };
 
   // Start listening
-  const startListening = useCallback(() => {
+  const startListening = () => {
     if (!isSupported) return;
-
+    
     setError(null);
     setTranscript('');
     setResponse('');
+    transcriptRef.current = '';
     
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    const recognition = new SpeechRecognition();
-    
-    recognition.continuous = false;
-    recognition.interimResults = true;
-    recognition.lang = 'en-US';
-
-    recognition.onstart = () => {
-      setVoiceStatus('listening');
-    };
-
-    recognition.onresult = (event) => {
-      let interimTranscript = '';
-      let finalTranscript = '';
-
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const transcript = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          finalTranscript += transcript;
-        } else {
-          interimTranscript += transcript;
-        }
-      }
-
-      setTranscript(finalTranscript || interimTranscript);
-    };
-
-    recognition.onend = async () => {
-      const currentTranscript = transcript;
+    try {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      const recognition = new SpeechRecognition();
       
-      if (currentTranscript && currentTranscript.trim().length > 0) {
-        setVoiceStatus('processing');
+      recognition.continuous = false;
+      recognition.interimResults = true;
+      recognition.lang = 'en-US';
+
+      recognition.onstart = () => {
+        setStatus('listening');
+      };
+
+      recognition.onresult = (event) => {
+        let finalText = '';
+        let interimText = '';
+
+        for (let i = 0; i < event.results.length; i++) {
+          const result = event.results[i];
+          if (result.isFinal) {
+            finalText += result[0].transcript;
+          } else {
+            interimText += result[0].transcript;
+          }
+        }
+
+        const currentText = finalText || interimText;
+        transcriptRef.current = currentText;
+        setTranscript(currentText);
+      };
+
+      recognition.onend = async () => {
+        const spokenText = transcriptRef.current.trim();
         
-        // Log to intelligence
-        if (addToIntelligence) {
-          addToIntelligence({
-            sourceType: 'voice_interaction',
-            sourceId: `voice_${Date.now()}`,
-            title: 'Voice Query',
-            content: currentTranscript,
-            department: activeDepartment?.name || 'General',
-            tags: ['voice', 'query'],
-            metadata: { timestamp: new Date().toISOString() },
-            relevanceBoost: 1
-          });
+        if (spokenText.length > 0) {
+          setStatus('processing');
+          
+          // Log to intelligence
+          if (addToIntelligence) {
+            try {
+              addToIntelligence(
+                'voice_interaction',
+                `voice_${Date.now()}`,
+                'Voice Query',
+                spokenText,
+                activeDepartment?.name || 'General',
+                {},
+                1
+              );
+            } catch (e) {}
+          }
+
+          // Get AI response
+          const aiResponse = await sendToAI(spokenText);
+          setResponse(aiResponse);
+
+          // Log activity
+          if (logActivity) {
+            try {
+              logActivity(`Voice: ${spokenText.substring(0, 50)}...`);
+            } catch (e) {}
+          }
+
+          // Speak it
+          speak(aiResponse);
+        } else {
+          setStatus('idle');
+          setError('No speech detected. Try again.');
         }
+      };
 
-        // Get AI response
-        const aiResponse = await sendToAI(currentTranscript);
-        setResponse(aiResponse);
-
-        // Log activity
-        if (logActivity) {
-          logActivity(`Voice conversation in ${activeDepartment?.name || 'General'}`);
+      recognition.onerror = (event) => {
+        console.error('Recognition error:', event.error);
+        setStatus('idle');
+        
+        if (event.error === 'no-speech') {
+          setError('No speech detected. Please try again.');
+        } else if (event.error === 'audio-capture') {
+          setError('No microphone found.');
+        } else if (event.error === 'not-allowed') {
+          setError('Microphone access denied. Please allow access.');
+        } else {
+          setError('Voice error. Please try again.');
         }
+      };
 
-        // Speak the response
-        speak(aiResponse);
-      } else {
-        setVoiceStatus('idle');
-      }
-    };
+      recognitionRef.current = recognition;
+      recognition.start();
+    } catch (e) {
+      console.error('Start error:', e);
+      setError('Could not start voice. Try refreshing.');
+      setStatus('idle');
+    }
+  };
 
-    recognition.onerror = (event) => {
-      console.error('Recognition error:', event.error);
-      if (event.error === 'no-speech') {
-        setError('No speech detected. Please try again.');
-      } else if (event.error === 'audio-capture') {
-        setError('No microphone found. Please check your settings.');
-      } else if (event.error === 'not-allowed') {
-        setError('Microphone access denied. Please allow microphone access.');
-      } else {
-        setError(`Error: ${event.error}`);
-      }
-      setVoiceStatus('idle');
-    };
-
-    recognitionRef.current = recognition;
-    recognition.start();
-  }, [isSupported, transcript, activeDepartment, addToIntelligence, addActivity, speak, sendToAI]);
-
-  // Stop listening
-  const stopListening = useCallback(() => {
+  // Stop everything
+  const stopAll = () => {
     if (recognitionRef.current) {
-      recognitionRef.current.stop();
-      recognitionRef.current = null;
+      try { recognitionRef.current.stop(); } catch (e) {}
     }
-  }, []);
+    if (window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
+    setStatus('idle');
+  };
 
-  // Handle main button click
+  // Main button handler
   const handleMainButton = () => {
-    if (voiceStatus === 'idle') {
+    if (status === 'idle') {
       startListening();
-    } else if (voiceStatus === 'listening') {
-      stopListening();
-    } else if (voiceStatus === 'speaking') {
-      stopSpeaking();
-      setVoiceStatus('idle');
+    } else {
+      stopAll();
     }
   };
 
-  // Toggle mute
-  const toggleMute = () => {
-    setIsMuted(!isMuted);
-    if (!isMuted && voiceStatus === 'speaking') {
-      stopSpeaking();
-      setVoiceStatus('idle');
-    }
-  };
-
-  if (!isOpen) return null;
-
-  // Status colors and animations
-  const getOrbStyle = () => {
-    const baseStyle = {
-      width: '200px',
-      height: '200px',
-      borderRadius: '50%',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      transition: 'all 0.5s ease',
-      position: 'relative'
-    };
-
-    switch (voiceStatus) {
-      case 'listening':
-        return {
-          ...baseStyle,
-          background: 'linear-gradient(135deg, rgba(16,185,129,0.4), rgba(59,130,246,0.4))',
-          boxShadow: '0 0 60px rgba(16,185,129,0.4), 0 0 100px rgba(16,185,129,0.2)',
-          animation: 'pulse 1.5s ease-in-out infinite'
-        };
-      case 'processing':
-        return {
-          ...baseStyle,
-          background: 'linear-gradient(135deg, rgba(245,158,11,0.4), rgba(239,68,68,0.4))',
-          boxShadow: '0 0 60px rgba(245,158,11,0.4)',
-          animation: 'spin 2s linear infinite'
-        };
-      case 'speaking':
-        return {
-          ...baseStyle,
-          background: 'linear-gradient(135deg, rgba(139,92,246,0.4), rgba(59,130,246,0.4))',
-          boxShadow: '0 0 60px rgba(139,92,246,0.4), 0 0 100px rgba(139,92,246,0.2)',
-          animation: 'pulse 0.8s ease-in-out infinite'
-        };
-      default:
-        return {
-          ...baseStyle,
-          background: 'linear-gradient(135deg, rgba(59,130,246,0.2), rgba(139,92,246,0.2))',
-          boxShadow: 'none'
-        };
+  // Get orb color
+  const getOrbColor = () => {
+    switch (status) {
+      case 'listening': return 'linear-gradient(135deg, #10B981, #059669)';
+      case 'processing': return 'linear-gradient(135deg, #F59E0B, #D97706)';
+      case 'speaking': return 'linear-gradient(135deg, #8B5CF6, #7C3AED)';
+      default: return 'linear-gradient(135deg, #3B82F6, #2563EB)';
     }
   };
 
   const getStatusText = () => {
-    switch (voiceStatus) {
+    switch (status) {
       case 'listening': return 'Listening...';
       case 'processing': return 'Thinking...';
       case 'speaking': return 'Speaking...';
@@ -344,15 +279,9 @@ Department Focus: ${deptDesc}`;
     }
   };
 
-  const getStatusColor = () => {
-    switch (voiceStatus) {
-      case 'listening': return '#10B981';
-      case 'processing': return '#F59E0B';
-      case 'speaking': return '#8B5CF6';
-      default: return '#64748B';
-    }
-  };
-
+  // ==========================================
+  // RENDER
+  // ==========================================
   return (
     <div style={{
       position: 'fixed',
@@ -364,11 +293,10 @@ Department Focus: ${deptDesc}`;
       justifyContent: 'center',
       zIndex: 1000
     }}>
-      {/* CSS Animations */}
       <style>{`
         @keyframes pulse {
-          0%, 100% { transform: scale(1); opacity: 1; }
-          50% { transform: scale(1.05); opacity: 0.8; }
+          0%, 100% { transform: scale(1); }
+          50% { transform: scale(1.05); }
         }
         @keyframes spin {
           from { transform: rotate(0deg); }
@@ -376,18 +304,17 @@ Department Focus: ${deptDesc}`;
         }
       `}</style>
 
-      {/* Modal Content */}
       <div style={{
         background: 'rgba(30, 41, 59, 0.95)',
         borderRadius: '24px',
         border: '1px solid rgba(255,255,255,0.1)',
         padding: '40px',
-        width: '500px',
+        width: '480px',
         maxWidth: '90vw',
         textAlign: 'center',
         position: 'relative'
       }}>
-        {/* Close Button */}
+        {/* Close */}
         <button
           onClick={onClose}
           style={{
@@ -409,46 +336,40 @@ Department Focus: ${deptDesc}`;
           <X size={20} />
         </button>
 
-        {/* Department Header */}
+        {/* Header */}
         <div style={{ marginBottom: '8px', fontSize: '13px', color: '#64748B' }}>
           Voice Mode
         </div>
-        <h2 style={{ fontSize: '24px', fontWeight: '700', marginBottom: '32px', color: '#E2E8F0' }}>
+        <h2 style={{ fontSize: '22px', fontWeight: '700', marginBottom: '24px', color: '#E2E8F0' }}>
           {activeDepartment?.name || 'Empire AI'}
         </h2>
 
-        {/* Browser Support Warning */}
+        {/* Browser Warning */}
         {!isSupported && (
           <div style={{
             background: 'rgba(239,68,68,0.1)',
             border: '1px solid rgba(239,68,68,0.3)',
             borderRadius: '12px',
             padding: '16px',
-            marginBottom: '24px',
+            marginBottom: '20px',
             display: 'flex',
             alignItems: 'center',
             gap: '12px'
           }}>
             <AlertCircle size={24} color="#EF4444" />
-            <div style={{ textAlign: 'left' }}>
-              <div style={{ fontWeight: '600', color: '#EF4444', marginBottom: '4px' }}>
-                Browser Not Supported
-              </div>
-              <div style={{ fontSize: '13px', color: '#94A3B8' }}>
-                Please use Chrome or Edge for voice features.
-              </div>
+            <div style={{ textAlign: 'left', fontSize: '14px', color: '#EF4444' }}>
+              Please use Chrome or Edge for voice features.
             </div>
           </div>
         )}
 
-        {/* Error Message */}
+        {/* Error */}
         {error && (
           <div style={{
             background: 'rgba(245,158,11,0.1)',
-            border: '1px solid rgba(245,158,11,0.3)',
-            borderRadius: '12px',
-            padding: '12px 16px',
-            marginBottom: '24px',
+            borderRadius: '10px',
+            padding: '12px',
+            marginBottom: '20px',
             fontSize: '14px',
             color: '#F59E0B'
           }}>
@@ -456,85 +377,76 @@ Department Focus: ${deptDesc}`;
           </div>
         )}
 
-        {/* Voice Orb */}
-        <div style={{
-          display: 'flex',
-          justifyContent: 'center',
-          marginBottom: '32px'
-        }}>
-          <div style={getOrbStyle()}>
-            <div style={{
-              width: '120px',
-              height: '120px',
-              borderRadius: '50%',
-              background: 'linear-gradient(135deg, #3B82F6, #8B5CF6)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center'
-            }}>
-              {voiceStatus === 'listening' ? (
-                <Mic size={48} color="#fff" />
-              ) : voiceStatus === 'processing' ? (
-                <div style={{
-                  width: '32px',
-                  height: '32px',
-                  border: '3px solid rgba(255,255,255,0.3)',
-                  borderTopColor: '#fff',
-                  borderRadius: '50%',
-                  animation: 'spin 1s linear infinite'
-                }} />
-              ) : (
-                <Mic size={48} color="#fff" />
-              )}
-            </div>
+        {/* Orb */}
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '24px' }}>
+          <div style={{
+            width: '160px',
+            height: '160px',
+            borderRadius: '50%',
+            background: getOrbColor(),
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            boxShadow: status !== 'idle' ? '0 0 40px rgba(59,130,246,0.3)' : 'none',
+            animation: status === 'listening' || status === 'speaking' ? 'pulse 1.5s ease-in-out infinite' : 'none',
+            transition: 'all 0.3s ease'
+          }}>
+            {status === 'processing' ? (
+              <div style={{
+                width: '40px',
+                height: '40px',
+                border: '3px solid rgba(255,255,255,0.3)',
+                borderTopColor: '#fff',
+                borderRadius: '50%',
+                animation: 'spin 1s linear infinite'
+              }} />
+            ) : (
+              <Mic size={48} color="#fff" />
+            )}
           </div>
         </div>
 
         {/* Status */}
-        <div style={{ marginBottom: '24px' }}>
-          <div style={{ 
-            fontSize: '18px', 
-            fontWeight: '600', 
-            marginBottom: '8px', 
-            color: getStatusColor() 
-          }}>
-            {getStatusText()}
-          </div>
+        <div style={{ 
+          fontSize: '16px', 
+          fontWeight: '600', 
+          marginBottom: '20px',
+          color: status === 'listening' ? '#10B981' : 
+                 status === 'processing' ? '#F59E0B' : 
+                 status === 'speaking' ? '#8B5CF6' : '#64748B'
+        }}>
+          {getStatusText()}
         </div>
 
         {/* Transcript */}
         {transcript && (
           <div style={{
-            marginBottom: '16px',
-            padding: '16px',
             background: 'rgba(59,130,246,0.1)',
-            borderRadius: '12px',
+            borderRadius: '10px',
+            padding: '14px',
+            marginBottom: '12px',
             textAlign: 'left'
           }}>
-            <div style={{ fontSize: '11px', color: '#64748B', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+            <div style={{ fontSize: '11px', color: '#64748B', marginBottom: '4px', textTransform: 'uppercase' }}>
               You said
             </div>
-            <div style={{ fontSize: '15px', color: '#E2E8F0', lineHeight: '1.5' }}>
-              {transcript}
-            </div>
+            <div style={{ fontSize: '14px', color: '#E2E8F0' }}>{transcript}</div>
           </div>
         )}
 
         {/* Response */}
         {response && (
           <div style={{
-            marginBottom: '24px',
-            padding: '16px',
             background: 'rgba(139,92,246,0.1)',
-            borderRadius: '12px',
+            borderRadius: '10px',
+            padding: '14px',
+            marginBottom: '20px',
             textAlign: 'left'
           }}>
-            <div style={{ fontSize: '11px', color: '#64748B', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+            <div style={{ fontSize: '11px', color: '#64748B', marginBottom: '4px', textTransform: 'uppercase' }}>
               Empire AI
             </div>
-            <div style={{ fontSize: '15px', color: '#E2E8F0', lineHeight: '1.5' }}>
-              {response}
-            </div>
+            <div style={{ fontSize: '14px', color: '#E2E8F0', lineHeight: '1.5' }}>{response}</div>
           </div>
         )}
 
@@ -543,66 +455,57 @@ Department Focus: ${deptDesc}`;
           {/* Main Button */}
           <button
             onClick={handleMainButton}
-            disabled={!isSupported || voiceStatus === 'processing'}
+            disabled={!isSupported}
             style={{
-              width: '72px',
-              height: '72px',
+              width: '64px',
+              height: '64px',
               borderRadius: '50%',
-              background: voiceStatus === 'idle' 
+              background: status === 'idle' 
                 ? 'linear-gradient(135deg, #10B981, #059669)' 
-                : voiceStatus === 'listening'
-                ? 'linear-gradient(135deg, #EF4444, #DC2626)'
-                : 'linear-gradient(135deg, #8B5CF6, #7C3AED)',
+                : 'linear-gradient(135deg, #EF4444, #DC2626)',
               border: 'none',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              cursor: isSupported && voiceStatus !== 'processing' ? 'pointer' : 'not-allowed',
-              opacity: !isSupported || voiceStatus === 'processing' ? 0.5 : 1,
-              transition: 'all 0.3s ease',
-              boxShadow: '0 4px 20px rgba(0,0,0,0.3)'
+              cursor: isSupported ? 'pointer' : 'not-allowed',
+              opacity: isSupported ? 1 : 0.5,
+              boxShadow: '0 4px 15px rgba(0,0,0,0.3)'
             }}
           >
-            {voiceStatus === 'idle' && <Mic size={28} color="#fff" />}
-            {voiceStatus === 'listening' && <Square size={24} color="#fff" />}
-            {voiceStatus === 'processing' && <div style={{ width: '24px', height: '24px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />}
-            {voiceStatus === 'speaking' && <Square size={24} color="#fff" />}
+            {status === 'idle' ? <Mic size={26} color="#fff" /> : <Square size={22} color="#fff" />}
           </button>
 
-          {/* Mute Button */}
+          {/* Mute */}
           <button
-            onClick={toggleMute}
+            onClick={() => {
+              setIsMuted(!isMuted);
+              if (!isMuted && status === 'speaking') {
+                window.speechSynthesis?.cancel();
+                setStatus('idle');
+              }
+            }}
             style={{
-              width: '48px',
-              height: '48px',
+              width: '44px',
+              height: '44px',
               borderRadius: '50%',
-              background: isMuted ? 'rgba(239, 68, 68, 0.2)' : 'rgba(255,255,255,0.1)',
+              background: isMuted ? 'rgba(239,68,68,0.2)' : 'rgba(255,255,255,0.1)',
               border: 'none',
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
-              justifyContent: 'center',
-              transition: 'all 0.3s ease'
+              justifyContent: 'center'
             }}
           >
-            {isMuted ? (
-              <VolumeX size={20} color="#EF4444" />
-            ) : (
-              <Volume2 size={20} color="#E2E8F0" />
-            )}
+            {isMuted ? <VolumeX size={18} color="#EF4444" /> : <Volume2 size={18} color="#E2E8F0" />}
           </button>
         </div>
 
-        {/* Instructions */}
-        <div style={{
-          marginTop: '24px',
-          fontSize: '13px',
-          color: '#64748B'
-        }}>
-          {voiceStatus === 'idle' && 'Tap the microphone to start speaking'}
-          {voiceStatus === 'listening' && 'Speak clearly, then pause when done'}
-          {voiceStatus === 'processing' && 'Getting response...'}
-          {voiceStatus === 'speaking' && 'Tap to stop speaking'}
+        {/* Hint */}
+        <div style={{ marginTop: '20px', fontSize: '13px', color: '#64748B' }}>
+          {status === 'idle' && 'Tap microphone to start'}
+          {status === 'listening' && 'Speak clearly, then pause'}
+          {status === 'processing' && 'Processing...'}
+          {status === 'speaking' && 'Tap stop to interrupt'}
         </div>
       </div>
     </div>
