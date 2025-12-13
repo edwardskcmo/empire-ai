@@ -1,235 +1,231 @@
-// ==========================================
-// EMPIRE AI - ISSUES PAGE
-// Dynamic table with archive, filters, and column management
-// ==========================================
-
 import React, { useState } from 'react';
 import { 
-  Plus, Archive, ArchiveRestore, Search, Filter, Columns, RotateCcw,
+  ClipboardList, Plus, Search, Filter, Archive, ArchiveRestore,
   Edit2, Trash2, X, ChevronDown
 } from 'lucide-react';
-import { formatDate, generateId, DEFAULT_COLUMNS } from '../utils';
 
-export default function Issues({ 
-  departments, issues, setIssues, issueColumns, setIssueColumns,
-  logActivity, addToIntelligence
+export default function Issues({
+  issues,
+  setIssues,
+  issueColumns,
+  setIssueColumns,
+  departments,
+  teamMembers,
+  logActivity,
+  addToIntelligence
 }) {
   const [showArchive, setShowArchive] = useState(false);
-  const [archiveSearch, setArchiveSearch] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingIssue, setEditingIssue] = useState(null);
-  const [filterStatus, setFilterStatus] = useState('');
-  const [filterPriority, setFilterPriority] = useState('');
-  const [filterDept, setFilterDept] = useState('');
-  const [showColumnMenu, setShowColumnMenu] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filterStatus, setFilterStatus] = useState('all');
+  const [filterPriority, setFilterPriority] = useState('all');
+  const [filterDept, setFilterDept] = useState('all');
+
   const [newIssue, setNewIssue] = useState({
     title: '',
     description: '',
     department: '',
     priority: 'Medium',
+    status: 'Open',
     assignee: ''
   });
 
-  // Filter issues
   const activeIssues = issues.filter(i => !i.archived);
   const archivedIssues = issues.filter(i => i.archived);
-  
-  let displayedIssues = showArchive ? archivedIssues : activeIssues;
-  
-  // Apply filters
-  if (filterStatus) displayedIssues = displayedIssues.filter(i => i.status === filterStatus);
-  if (filterPriority) displayedIssues = displayedIssues.filter(i => i.priority === filterPriority);
-  if (filterDept) displayedIssues = displayedIssues.filter(i => i.department === filterDept);
-  if (showArchive && archiveSearch) {
-    const search = archiveSearch.toLowerCase();
-    displayedIssues = displayedIssues.filter(i => 
-      i.title.toLowerCase().includes(search) || 
-      i.description?.toLowerCase().includes(search)
-    );
-  }
+
+  // Filter issues
+  const filteredIssues = (showArchive ? archivedIssues : activeIssues).filter(issue => {
+    if (searchTerm && !issue.title.toLowerCase().includes(searchTerm.toLowerCase())) return false;
+    if (filterStatus !== 'all' && issue.status !== filterStatus) return false;
+    if (filterPriority !== 'all' && issue.priority !== filterPriority) return false;
+    if (filterDept !== 'all' && issue.department !== filterDept) return false;
+    return true;
+  });
 
   // Add issue
-  const addIssue = () => {
+  const handleAddIssue = () => {
     if (!newIssue.title.trim()) return;
+
     const issue = {
-      id: generateId('issue'),
-      ...newIssue,
-      status: 'Open',
+      id: `issue_${Date.now()}`,
+      title: newIssue.title.trim(),
+      description: newIssue.description.trim(),
+      department: newIssue.department,
+      priority: newIssue.priority,
+      status: newIssue.status,
+      assignee: newIssue.assignee,
       createdAt: new Date().toISOString(),
       archived: false
     };
+
     setIssues(prev => [issue, ...prev]);
-    
+    logActivity(`Created issue: ${issue.title}`, 'issue');
+
     // Add to intelligence
     const boost = issue.priority === 'High' ? 3 : issue.priority === 'Medium' ? 2 : 1;
-    addToIntelligence('issue_created', issue.id, issue.title, issue.description || '', issue.department, { priority: issue.priority, status: 'Open' }, boost);
-    
-    logActivity('Issue created', issue.title);
-    setNewIssue({ title: '', description: '', department: '', priority: 'Medium', assignee: '' });
+    if (addToIntelligence) {
+      addToIntelligence({
+        sourceType: 'issue_created',
+        sourceId: issue.id,
+        title: issue.title,
+        content: issue.description,
+        department: issue.department,
+        tags: ['issue', 'open', issue.priority.toLowerCase()],
+        relevanceBoost: boost
+      });
+    }
+
+    setNewIssue({ title: '', description: '', department: '', priority: 'Medium', status: 'Open', assignee: '' });
     setShowAddModal(false);
   };
 
   // Update issue
-  const updateIssue = (id, updates) => {
-    const issue = issues.find(i => i.id === id);
-    if (!issue) return;
+  const handleUpdateIssue = () => {
+    if (!editingIssue) return;
 
-    // Check for status change
-    if (updates.status && updates.status !== issue.status) {
-      let boost = 1;
-      if (updates.status === 'Resolved') {
-        boost = 3;
-        updates.resolvedAt = new Date().toISOString();
-        addToIntelligence('resolved_issue', id, `Resolved: ${issue.title}`, issue.description || '', issue.department, {}, 5);
-      }
-      addToIntelligence('issue_status_change', id, `${issue.title} → ${updates.status}`, `Status changed from ${issue.status} to ${updates.status}`, issue.department, {}, boost);
+    const oldIssue = issues.find(i => i.id === editingIssue.id);
+    
+    setIssues(prev => prev.map(i => 
+      i.id === editingIssue.id ? editingIssue : i
+    ));
+
+    // Log status change to intelligence
+    if (oldIssue?.status !== editingIssue.status && addToIntelligence) {
+      const boost = editingIssue.status === 'Resolved' ? 3 : 1;
+      addToIntelligence({
+        sourceType: editingIssue.status === 'Resolved' ? 'resolved_issue' : 'issue_status_change',
+        sourceId: editingIssue.id,
+        title: `${editingIssue.title} - ${editingIssue.status}`,
+        content: editingIssue.description + (editingIssue.resolutionNotes ? `\n\nResolution: ${editingIssue.resolutionNotes}` : ''),
+        department: editingIssue.department,
+        tags: ['issue', editingIssue.status.toLowerCase().replace(' ', '-')],
+        relevanceBoost: boost
+      });
     }
 
-    // Check for priority change
-    if (updates.priority && updates.priority !== issue.priority) {
-      const boost = updates.priority === 'High' ? 2 : 1;
-      addToIntelligence('issue_priority_change', id, `${issue.title} priority changed`, `Priority changed from ${issue.priority} to ${updates.priority}`, issue.department, {}, boost);
-    }
-
-    setIssues(prev => prev.map(i => i.id === id ? { ...i, ...updates } : i));
-    logActivity('Issue updated', issue.title);
+    logActivity(`Updated issue: ${editingIssue.title}`, 'issue');
+    setEditingIssue(null);
   };
 
   // Archive issue
-  const archiveIssue = (id) => {
-    const issue = issues.find(i => i.id === id);
-    if (!issue) return;
-    setIssues(prev => prev.map(i => i.id === id ? { ...i, archived: true, archivedAt: new Date().toISOString() } : i));
-    addToIntelligence('archived_issue', id, `Archived: ${issue.title}`, issue.description || '', issue.department, {}, 2);
-    logActivity('Issue archived', issue.title);
+  const handleArchive = (issueId) => {
+    setIssues(prev => prev.map(i => 
+      i.id === issueId ? { ...i, archived: true, archivedAt: new Date().toISOString() } : i
+    ));
+    logActivity('Archived issue', 'issue');
   };
 
   // Unarchive issue
-  const unarchiveIssue = (id) => {
-    const issue = issues.find(i => i.id === id);
-    if (!issue) return;
-    setIssues(prev => prev.map(i => i.id === id ? { ...i, archived: false, archivedAt: null } : i));
-    logActivity('Issue restored', issue.title);
+  const handleUnarchive = (issueId) => {
+    setIssues(prev => prev.map(i => 
+      i.id === issueId ? { ...i, archived: false, archivedAt: null } : i
+    ));
+    logActivity('Restored issue from archive', 'issue');
   };
 
   // Delete issue
-  const deleteIssue = (id) => {
-    if (!window.confirm('Delete this issue permanently?')) return;
-    setIssues(prev => prev.filter(i => i.id !== id));
-    logActivity('Issue deleted');
+  const handleDelete = (issueId) => {
+    if (window.confirm('Permanently delete this issue?')) {
+      setIssues(prev => prev.filter(i => i.id !== issueId));
+      logActivity('Deleted issue', 'issue');
+    }
   };
 
-  // Toggle column visibility
-  const toggleColumn = (colId) => {
-    setIssueColumns(prev => prev.map(c => c.id === colId ? { ...c, visible: !c.visible } : c));
+  // Quick status update
+  const handleStatusChange = (issueId, newStatus) => {
+    const issue = issues.find(i => i.id === issueId);
+    if (!issue) return;
+
+    const updatedIssue = { ...issue, status: newStatus };
+    if (newStatus === 'Resolved') {
+      updatedIssue.resolvedAt = new Date().toISOString();
+    }
+
+    setIssues(prev => prev.map(i => i.id === issueId ? updatedIssue : i));
+    logActivity(`Changed status to ${newStatus}`, 'issue');
+
+    if (newStatus === 'Resolved' && addToIntelligence) {
+      addToIntelligence({
+        sourceType: 'resolved_issue',
+        sourceId: issueId,
+        title: `Resolved: ${issue.title}`,
+        content: issue.description,
+        department: issue.department,
+        tags: ['issue', 'resolved', issue.priority.toLowerCase()],
+        relevanceBoost: 5
+      });
+    }
   };
 
-  // Reset columns
-  const resetColumns = () => {
-    setIssueColumns(DEFAULT_COLUMNS);
-    logActivity('Issue columns reset');
+  const getPriorityColor = (priority) => {
+    switch (priority) {
+      case 'High': return '#EF4444';
+      case 'Medium': return '#F59E0B';
+      case 'Low': return '#10B981';
+      default: return '#64748B';
+    }
   };
 
-  // Get department name
-  const getDeptName = (deptId) => {
-    const dept = departments.find(d => d.id === deptId);
-    return dept?.name || 'General';
+  const getStatusColor = (status) => {
+    switch (status) {
+      case 'Open': return '#3B82F6';
+      case 'In Progress': return '#F59E0B';
+      case 'Resolved': return '#10B981';
+      default: return '#64748B';
+    }
   };
 
-  // Priority colors
-  const priorityColors = {
-    High: '#EF4444',
-    Medium: '#F59E0B',
-    Low: '#10B981'
-  };
-
-  // Status colors
-  const statusColors = {
-    Open: '#3B82F6',
-    'In Progress': '#F59E0B',
-    Resolved: '#10B981'
-  };
-
-  // Card style
-  const cardStyle = {
-    background: 'rgba(30, 41, 59, 0.8)',
-    backdropFilter: 'blur(10px)',
-    borderRadius: 12,
-    border: '1px solid rgba(255,255,255,0.06)'
-  };
-
-  // Modal style
-  const modalOverlay = {
-    position: 'fixed',
-    inset: 0,
-    background: 'rgba(0,0,0,0.7)',
-    backdropFilter: 'blur(4px)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 1000
-  };
-
-  const modalContent = {
-    background: 'rgba(30, 41, 59, 0.95)',
-    borderRadius: 16,
-    border: '1px solid rgba(255,255,255,0.1)',
-    padding: 24,
-    width: '100%',
-    maxWidth: 500
+  const formatDate = (dateString) => {
+    if (!dateString) return '-';
+    return new Date(dateString).toLocaleDateString();
   };
 
   return (
-    <div>
+    <div style={{ padding: '24px' }}>
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px' }}>
         <div>
-          <h1 style={{ fontSize: 28, fontWeight: 700, marginBottom: 4 }}>Issues Board</h1>
-          <p style={{ color: '#94A3B8' }}>
+          <h1 style={{ fontSize: '28px', fontWeight: '700', color: '#E2E8F0', display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <ClipboardList size={32} style={{ color: '#F59E0B' }} />
+            Issues Board
+          </h1>
+          <p style={{ color: '#94A3B8', marginTop: '4px' }}>
             {showArchive ? `${archivedIssues.length} archived issues` : `${activeIssues.length} active issues`}
           </p>
         </div>
-        <div style={{ display: 'flex', gap: 12 }}>
+        <div style={{ display: 'flex', gap: '12px' }}>
           <button
             onClick={() => setShowArchive(!showArchive)}
             style={{
-              padding: '10px 16px',
-              background: showArchive ? 'rgba(139, 92, 246, 0.2)' : 'rgba(255,255,255,0.05)',
-              border: showArchive ? '1px solid #8B5CF6' : '1px solid rgba(255,255,255,0.1)',
-              borderRadius: 8,
-              color: showArchive ? '#8B5CF6' : '#94A3B8',
-              fontWeight: 500,
-              cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
-              gap: 8
+              gap: '8px',
+              background: showArchive ? 'rgba(139, 92, 246, 0.2)' : 'rgba(255,255,255,0.1)',
+              border: showArchive ? '1px solid rgba(139, 92, 246, 0.3)' : '1px solid rgba(255,255,255,0.1)',
+              borderRadius: '8px',
+              padding: '10px 16px',
+              color: showArchive ? '#A78BFA' : '#94A3B8',
+              cursor: 'pointer',
+              fontSize: '14px'
             }}
           >
             <Archive size={16} />
-            Archive
-            {archivedIssues.length > 0 && (
-              <span style={{
-                background: '#8B5CF6',
-                color: 'white',
-                fontSize: 11,
-                padding: '2px 6px',
-                borderRadius: 10
-              }}>{archivedIssues.length}</span>
-            )}
+            Archive ({archivedIssues.length})
           </button>
           <button
             onClick={() => setShowAddModal(true)}
             style={{
-              padding: '10px 20px',
-              background: '#3B82F6',
-              border: 'none',
-              borderRadius: 8,
-              color: 'white',
-              fontWeight: 600,
-              cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
-              gap: 8
+              gap: '8px',
+              background: '#3B82F6',
+              border: 'none',
+              borderRadius: '8px',
+              padding: '10px 16px',
+              color: 'white',
+              cursor: 'pointer',
+              fontSize: '14px'
             }}
           >
             <Plus size={16} />
@@ -239,420 +235,396 @@ export default function Issues({
       </div>
 
       {/* Filters */}
-      <div style={{ ...cardStyle, padding: 16, marginBottom: 16, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-        {showArchive && (
-          <div style={{ position: 'relative', flex: 1, minWidth: 200 }}>
-            <Search size={16} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: '#64748B' }} />
-            <input
-              value={archiveSearch}
-              onChange={e => setArchiveSearch(e.target.value)}
-              placeholder="Search archive..."
-              style={{
-                width: '100%',
-                padding: '10px 12px 10px 36px',
-                background: 'rgba(15, 23, 42, 0.6)',
-                border: '1px solid rgba(255,255,255,0.1)',
-                borderRadius: 8,
-                color: '#E2E8F0',
-                fontSize: 14
-              }}
-            />
-          </div>
-        )}
-        
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Filter size={16} style={{ color: '#64748B' }} />
-          
-          <select
-            value={filterStatus}
-            onChange={e => setFilterStatus(e.target.value)}
+      <div style={{
+        display: 'flex',
+        gap: '12px',
+        marginBottom: '20px',
+        flexWrap: 'wrap'
+      }}>
+        <div style={{ position: 'relative', flex: 1, minWidth: '200px' }}>
+          <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#64748B' }} />
+          <input
+            type="text"
+            placeholder="Search issues..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
             style={{
-              padding: '8px 12px',
-              background: 'rgba(15, 23, 42, 0.6)',
+              width: '100%',
+              background: 'rgba(30, 41, 59, 0.8)',
               border: '1px solid rgba(255,255,255,0.1)',
-              borderRadius: 6,
+              borderRadius: '8px',
+              padding: '10px 12px 10px 40px',
               color: '#E2E8F0',
-              fontSize: 13
+              fontSize: '14px',
+              boxSizing: 'border-box'
             }}
-          >
-            <option value="">All Status</option>
-            <option value="Open">Open</option>
-            <option value="In Progress">In Progress</option>
-            <option value="Resolved">Resolved</option>
-          </select>
-
-          <select
-            value={filterPriority}
-            onChange={e => setFilterPriority(e.target.value)}
-            style={{
-              padding: '8px 12px',
-              background: 'rgba(15, 23, 42, 0.6)',
-              border: '1px solid rgba(255,255,255,0.1)',
-              borderRadius: 6,
-              color: '#E2E8F0',
-              fontSize: 13
-            }}
-          >
-            <option value="">All Priority</option>
-            <option value="High">High</option>
-            <option value="Medium">Medium</option>
-            <option value="Low">Low</option>
-          </select>
-
-          <select
-            value={filterDept}
-            onChange={e => setFilterDept(e.target.value)}
-            style={{
-              padding: '8px 12px',
-              background: 'rgba(15, 23, 42, 0.6)',
-              border: '1px solid rgba(255,255,255,0.1)',
-              borderRadius: 6,
-              color: '#E2E8F0',
-              fontSize: 13
-            }}
-          >
-            <option value="">All Departments</option>
-            {departments.map(d => (
-              <option key={d.id} value={d.id}>{d.name}</option>
-            ))}
-          </select>
+          />
         </div>
 
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-          <div style={{ position: 'relative' }}>
-            <button
-              onClick={() => setShowColumnMenu(!showColumnMenu)}
-              style={{
-                padding: '8px 12px',
-                background: 'rgba(255,255,255,0.05)',
-                border: '1px solid rgba(255,255,255,0.1)',
-                borderRadius: 6,
-                color: '#94A3B8',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6
-              }}
-            >
-              <Columns size={14} />
-              Columns
-            </button>
-            {showColumnMenu && (
-              <div style={{
-                position: 'absolute',
-                top: '100%',
-                right: 0,
-                marginTop: 4,
-                background: 'rgba(30, 41, 59, 0.98)',
-                border: '1px solid rgba(255,255,255,0.1)',
-                borderRadius: 8,
-                padding: 8,
-                minWidth: 160,
-                zIndex: 100
-              }}>
-                {issueColumns.filter(c => c.id !== 'actions').map(col => (
-                  <label
-                    key={col.id}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      padding: '6px 8px',
-                      cursor: 'pointer',
-                      borderRadius: 4
-                    }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={col.visible}
-                      onChange={() => toggleColumn(col.id)}
-                    />
-                    <span style={{ color: '#E2E8F0', fontSize: 13 }}>{col.name}</span>
-                  </label>
-                ))}
-              </div>
-            )}
-          </div>
-          
-          <button
-            onClick={resetColumns}
-            style={{
-              padding: '8px 12px',
-              background: 'rgba(255,255,255,0.05)',
-              border: '1px solid rgba(255,255,255,0.1)',
-              borderRadius: 6,
-              color: '#94A3B8',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6
-            }}
-          >
-            <RotateCcw size={14} />
-            Reset
-          </button>
-        </div>
+        <select
+          value={filterStatus}
+          onChange={(e) => setFilterStatus(e.target.value)}
+          style={{
+            background: 'rgba(30, 41, 59, 0.8)',
+            border: '1px solid rgba(255,255,255,0.1)',
+            borderRadius: '8px',
+            padding: '10px 12px',
+            color: '#E2E8F0',
+            fontSize: '14px'
+          }}
+        >
+          <option value="all">All Status</option>
+          <option value="Open">Open</option>
+          <option value="In Progress">In Progress</option>
+          <option value="Resolved">Resolved</option>
+        </select>
+
+        <select
+          value={filterPriority}
+          onChange={(e) => setFilterPriority(e.target.value)}
+          style={{
+            background: 'rgba(30, 41, 59, 0.8)',
+            border: '1px solid rgba(255,255,255,0.1)',
+            borderRadius: '8px',
+            padding: '10px 12px',
+            color: '#E2E8F0',
+            fontSize: '14px'
+          }}
+        >
+          <option value="all">All Priority</option>
+          <option value="High">High</option>
+          <option value="Medium">Medium</option>
+          <option value="Low">Low</option>
+        </select>
+
+        <select
+          value={filterDept}
+          onChange={(e) => setFilterDept(e.target.value)}
+          style={{
+            background: 'rgba(30, 41, 59, 0.8)',
+            border: '1px solid rgba(255,255,255,0.1)',
+            borderRadius: '8px',
+            padding: '10px 12px',
+            color: '#E2E8F0',
+            fontSize: '14px'
+          }}
+        >
+          <option value="all">All Departments</option>
+          {departments.map(d => (
+            <option key={d.id} value={d.id}>{d.name}</option>
+          ))}
+        </select>
       </div>
 
       {/* Issues Table */}
-      <div style={{ ...cardStyle, overflow: 'hidden' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead>
-            <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-              {issueColumns.filter(c => c.visible).map(col => (
-                <th
-                  key={col.id}
+      <div style={{
+        background: 'rgba(30, 41, 59, 0.8)',
+        borderRadius: '12px',
+        border: '1px solid rgba(255,255,255,0.06)',
+        overflow: 'hidden'
+      }}>
+        {/* Table Header */}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: '2fr 1fr 100px 120px 1fr 100px 100px',
+          gap: '12px',
+          padding: '12px 16px',
+          background: 'rgba(15, 23, 42, 0.5)',
+          borderBottom: '1px solid rgba(255,255,255,0.06)'
+        }}>
+          <span style={{ color: '#94A3B8', fontSize: '12px', fontWeight: '600', textTransform: 'uppercase' }}>Issue</span>
+          <span style={{ color: '#94A3B8', fontSize: '12px', fontWeight: '600', textTransform: 'uppercase' }}>Department</span>
+          <span style={{ color: '#94A3B8', fontSize: '12px', fontWeight: '600', textTransform: 'uppercase' }}>Priority</span>
+          <span style={{ color: '#94A3B8', fontSize: '12px', fontWeight: '600', textTransform: 'uppercase' }}>Status</span>
+          <span style={{ color: '#94A3B8', fontSize: '12px', fontWeight: '600', textTransform: 'uppercase' }}>Assignee</span>
+          <span style={{ color: '#94A3B8', fontSize: '12px', fontWeight: '600', textTransform: 'uppercase' }}>Created</span>
+          <span style={{ color: '#94A3B8', fontSize: '12px', fontWeight: '600', textTransform: 'uppercase' }}>Actions</span>
+        </div>
+
+        {/* Table Body */}
+        {filteredIssues.length === 0 ? (
+          <div style={{ padding: '60px', textAlign: 'center' }}>
+            <ClipboardList size={48} style={{ color: '#64748B', marginBottom: '16px' }} />
+            <p style={{ color: '#94A3B8', fontSize: '16px' }}>
+              {showArchive ? 'No archived issues' : 'No issues found'}
+            </p>
+          </div>
+        ) : (
+          filteredIssues.map(issue => {
+            const dept = departments.find(d => d.id === issue.department);
+            
+            return (
+              <div key={issue.id} style={{
+                display: 'grid',
+                gridTemplateColumns: '2fr 1fr 100px 120px 1fr 100px 100px',
+                gap: '12px',
+                padding: '14px 16px',
+                borderBottom: '1px solid rgba(255,255,255,0.03)',
+                alignItems: 'center'
+              }}>
+                {/* Title */}
+                <div>
+                  <p style={{ color: '#E2E8F0', fontSize: '14px', fontWeight: '500', margin: 0 }}>{issue.title}</p>
+                  {issue.description && (
+                    <p style={{ color: '#64748B', fontSize: '12px', margin: '4px 0 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {issue.description}
+                    </p>
+                  )}
+                </div>
+
+                {/* Department */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{ fontSize: '14px' }}>{dept?.icon || '📁'}</span>
+                  <span style={{ color: '#94A3B8', fontSize: '13px' }}>{dept?.name || 'Unassigned'}</span>
+                </div>
+
+                {/* Priority */}
+                <span style={{
+                  background: `${getPriorityColor(issue.priority)}20`,
+                  color: getPriorityColor(issue.priority),
+                  padding: '4px 10px',
+                  borderRadius: '20px',
+                  fontSize: '12px',
+                  fontWeight: '500',
+                  textAlign: 'center'
+                }}>
+                  {issue.priority}
+                </span>
+
+                {/* Status */}
+                <select
+                  value={issue.status}
+                  onChange={(e) => handleStatusChange(issue.id, e.target.value)}
+                  disabled={issue.archived}
                   style={{
-                    padding: '14px 16px',
-                    textAlign: 'left',
-                    fontWeight: 600,
-                    fontSize: 12,
-                    color: '#94A3B8',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.5px',
-                    width: col.width
+                    background: `${getStatusColor(issue.status)}20`,
+                    border: 'none',
+                    borderRadius: '20px',
+                    padding: '4px 10px',
+                    color: getStatusColor(issue.status),
+                    fontSize: '12px',
+                    fontWeight: '500',
+                    cursor: issue.archived ? 'not-allowed' : 'pointer'
                   }}
                 >
-                  {col.name}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {displayedIssues.map(issue => (
-              <tr 
-                key={issue.id}
-                style={{ 
-                  borderBottom: '1px solid rgba(255,255,255,0.03)',
-                  transition: 'background 0.2s'
-                }}
-                onMouseOver={e => e.currentTarget.style.background = 'rgba(255,255,255,0.02)'}
-                onMouseOut={e => e.currentTarget.style.background = 'transparent'}
-              >
-                {issueColumns.filter(c => c.visible).map(col => (
-                  <td key={col.id} style={{ padding: '14px 16px' }}>
-                    {col.id === 'title' && (
-                      <div>
-                        <div style={{ fontWeight: 500 }}>{issue.title}</div>
-                        {issue.description && (
-                          <div style={{ fontSize: 12, color: '#64748B', marginTop: 2 }}>
-                            {issue.description.substring(0, 60)}...
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    {col.id === 'department' && (
-                      <span style={{ fontSize: 13, color: '#94A3B8' }}>{getDeptName(issue.department)}</span>
-                    )}
-                    {col.id === 'priority' && (
-                      <span style={{
-                        padding: '4px 10px',
-                        background: `${priorityColors[issue.priority]}22`,
-                        color: priorityColors[issue.priority],
-                        borderRadius: 12,
-                        fontSize: 12,
-                        fontWeight: 500
-                      }}>
-                        {issue.priority}
-                      </span>
-                    )}
-                    {col.id === 'status' && (
-                      <select
-                        value={issue.status}
-                        onChange={e => updateIssue(issue.id, { status: e.target.value })}
+                  <option value="Open">Open</option>
+                  <option value="In Progress">In Progress</option>
+                  <option value="Resolved">Resolved</option>
+                </select>
+
+                {/* Assignee */}
+                <span style={{ color: '#94A3B8', fontSize: '13px' }}>{issue.assignee || '-'}</span>
+
+                {/* Created */}
+                <span style={{ color: '#64748B', fontSize: '12px' }}>{formatDate(issue.createdAt)}</span>
+
+                {/* Actions */}
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  {!issue.archived ? (
+                    <>
+                      <button
+                        onClick={() => setEditingIssue({ ...issue })}
                         style={{
-                          padding: '6px 10px',
-                          background: `${statusColors[issue.status]}22`,
+                          background: 'rgba(59, 130, 246, 0.1)',
                           border: 'none',
-                          borderRadius: 6,
-                          color: statusColors[issue.status],
-                          fontSize: 12,
-                          fontWeight: 500,
-                          cursor: 'pointer'
+                          borderRadius: '4px',
+                          padding: '6px',
+                          cursor: 'pointer',
+                          color: '#3B82F6'
                         }}
+                        title="Edit"
                       >
-                        <option value="Open">Open</option>
-                        <option value="In Progress">In Progress</option>
-                        <option value="Resolved">Resolved</option>
-                      </select>
-                    )}
-                    {col.id === 'assignee' && (
-                      <span style={{ fontSize: 13, color: '#94A3B8' }}>{issue.assignee || '-'}</span>
-                    )}
-                    {col.id === 'createdAt' && (
-                      <span style={{ fontSize: 12, color: '#64748B' }}>{formatDate(issue.createdAt)}</span>
-                    )}
-                    {col.id === 'actions' && (
-                      <div style={{ display: 'flex', gap: 4 }}>
-                        <button
-                          onClick={() => setEditingIssue(issue)}
-                          style={{ background: 'transparent', border: 'none', color: '#64748B', cursor: 'pointer', padding: 6 }}
-                        >
-                          <Edit2 size={14} />
-                        </button>
-                        {showArchive ? (
-                          <>
-                            <button
-                              onClick={() => unarchiveIssue(issue.id)}
-                              style={{ background: 'transparent', border: 'none', color: '#10B981', cursor: 'pointer', padding: 6 }}
-                            >
-                              <ArchiveRestore size={14} />
-                            </button>
-                            <button
-                              onClick={() => deleteIssue(issue.id)}
-                              style={{ background: 'transparent', border: 'none', color: '#EF4444', cursor: 'pointer', padding: 6 }}
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          </>
-                        ) : (
-                          <button
-                            onClick={() => archiveIssue(issue.id)}
-                            style={{ background: 'transparent', border: 'none', color: '#8B5CF6', cursor: 'pointer', padding: 6 }}
-                          >
-                            <Archive size={14} />
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        
-        {displayedIssues.length === 0 && (
-          <div style={{ textAlign: 'center', padding: 48, color: '#64748B' }}>
-            {showArchive ? 'No archived issues found' : 'No issues found'}
-          </div>
+                        <Edit2 size={14} />
+                      </button>
+                      <button
+                        onClick={() => handleArchive(issue.id)}
+                        style={{
+                          background: 'rgba(139, 92, 246, 0.1)',
+                          border: 'none',
+                          borderRadius: '4px',
+                          padding: '6px',
+                          cursor: 'pointer',
+                          color: '#8B5CF6'
+                        }}
+                        title="Archive"
+                      >
+                        <Archive size={14} />
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => handleUnarchive(issue.id)}
+                        style={{
+                          background: 'rgba(16, 185, 129, 0.1)',
+                          border: 'none',
+                          borderRadius: '4px',
+                          padding: '6px',
+                          cursor: 'pointer',
+                          color: '#10B981'
+                        }}
+                        title="Restore"
+                      >
+                        <ArchiveRestore size={14} />
+                      </button>
+                      <button
+                        onClick={() => handleDelete(issue.id)}
+                        style={{
+                          background: 'rgba(239, 68, 68, 0.1)',
+                          border: 'none',
+                          borderRadius: '4px',
+                          padding: '6px',
+                          cursor: 'pointer',
+                          color: '#EF4444'
+                        }}
+                        title="Delete"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            );
+          })
         )}
       </div>
 
       {/* Add Issue Modal */}
       {showAddModal && (
-        <div style={modalOverlay} onClick={() => setShowAddModal(false)}>
-          <div style={modalContent} onClick={e => e.stopPropagation()}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-              <h2 style={{ fontSize: 20, fontWeight: 700 }}>New Issue</h2>
-              <button onClick={() => setShowAddModal(false)} style={{ background: 'transparent', border: 'none', color: '#94A3B8', cursor: 'pointer' }}>
-                <X size={20} />
-              </button>
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(0,0,0,0.8)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 100
+        }}>
+          <div style={{
+            background: '#1E293B',
+            borderRadius: '16px',
+            padding: '24px',
+            width: '500px',
+            maxWidth: '90vw'
+          }}>
+            <h2 style={{ color: '#E2E8F0', fontSize: '20px', marginBottom: '20px' }}>New Issue</h2>
+
+            <input
+              type="text"
+              placeholder="Issue title"
+              value={newIssue.title}
+              onChange={(e) => setNewIssue({ ...newIssue, title: e.target.value })}
+              style={{
+                width: '100%',
+                background: 'rgba(15, 23, 42, 0.8)',
+                border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: '8px',
+                padding: '12px',
+                color: '#E2E8F0',
+                marginBottom: '12px',
+                fontSize: '14px',
+                boxSizing: 'border-box'
+              }}
+            />
+
+            <textarea
+              placeholder="Description (optional)"
+              value={newIssue.description}
+              onChange={(e) => setNewIssue({ ...newIssue, description: e.target.value })}
+              style={{
+                width: '100%',
+                background: 'rgba(15, 23, 42, 0.8)',
+                border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: '8px',
+                padding: '12px',
+                color: '#E2E8F0',
+                marginBottom: '12px',
+                fontSize: '14px',
+                minHeight: '80px',
+                resize: 'vertical',
+                boxSizing: 'border-box'
+              }}
+            />
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
+              <select
+                value={newIssue.department}
+                onChange={(e) => setNewIssue({ ...newIssue, department: e.target.value })}
+                style={{
+                  background: 'rgba(15, 23, 42, 0.8)',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  borderRadius: '8px',
+                  padding: '12px',
+                  color: '#E2E8F0',
+                  fontSize: '14px'
+                }}
+              >
+                <option value="">Select department</option>
+                {departments.map(d => (
+                  <option key={d.id} value={d.id}>{d.name}</option>
+                ))}
+              </select>
+
+              <select
+                value={newIssue.priority}
+                onChange={(e) => setNewIssue({ ...newIssue, priority: e.target.value })}
+                style={{
+                  background: 'rgba(15, 23, 42, 0.8)',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  borderRadius: '8px',
+                  padding: '12px',
+                  color: '#E2E8F0',
+                  fontSize: '14px'
+                }}
+              >
+                <option value="Low">Low Priority</option>
+                <option value="Medium">Medium Priority</option>
+                <option value="High">High Priority</option>
+              </select>
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              <div>
-                <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: '#94A3B8' }}>Title</label>
-                <input
-                  value={newIssue.title}
-                  onChange={e => setNewIssue({ ...newIssue, title: e.target.value })}
-                  placeholder="Issue title"
-                  style={{
-                    width: '100%',
-                    padding: '12px 16px',
-                    background: 'rgba(15, 23, 42, 0.6)',
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    borderRadius: 8,
-                    color: '#E2E8F0',
-                    fontSize: 14
-                  }}
-                />
-              </div>
+            <input
+              type="text"
+              placeholder="Assignee (optional)"
+              value={newIssue.assignee}
+              onChange={(e) => setNewIssue({ ...newIssue, assignee: e.target.value })}
+              style={{
+                width: '100%',
+                background: 'rgba(15, 23, 42, 0.8)',
+                border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: '8px',
+                padding: '12px',
+                color: '#E2E8F0',
+                marginBottom: '20px',
+                fontSize: '14px',
+                boxSizing: 'border-box'
+              }}
+            />
 
-              <div>
-                <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: '#94A3B8' }}>Description</label>
-                <textarea
-                  value={newIssue.description}
-                  onChange={e => setNewIssue({ ...newIssue, description: e.target.value })}
-                  placeholder="Describe the issue..."
-                  rows={3}
-                  style={{
-                    width: '100%',
-                    padding: '12px 16px',
-                    background: 'rgba(15, 23, 42, 0.6)',
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    borderRadius: 8,
-                    color: '#E2E8F0',
-                    fontSize: 14,
-                    resize: 'none'
-                  }}
-                />
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                <div>
-                  <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: '#94A3B8' }}>Department</label>
-                  <select
-                    value={newIssue.department}
-                    onChange={e => setNewIssue({ ...newIssue, department: e.target.value })}
-                    style={{
-                      width: '100%',
-                      padding: '12px 16px',
-                      background: 'rgba(15, 23, 42, 0.6)',
-                      border: '1px solid rgba(255,255,255,0.1)',
-                      borderRadius: 8,
-                      color: '#E2E8F0',
-                      fontSize: 14
-                    }}
-                  >
-                    <option value="">Select department</option>
-                    {departments.map(d => (
-                      <option key={d.id} value={d.id}>{d.name}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: '#94A3B8' }}>Priority</label>
-                  <select
-                    value={newIssue.priority}
-                    onChange={e => setNewIssue({ ...newIssue, priority: e.target.value })}
-                    style={{
-                      width: '100%',
-                      padding: '12px 16px',
-                      background: 'rgba(15, 23, 42, 0.6)',
-                      border: '1px solid rgba(255,255,255,0.1)',
-                      borderRadius: 8,
-                      color: '#E2E8F0',
-                      fontSize: 14
-                    }}
-                  >
-                    <option value="Low">Low</option>
-                    <option value="Medium">Medium</option>
-                    <option value="High">High</option>
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: '#94A3B8' }}>Assignee</label>
-                <input
-                  value={newIssue.assignee}
-                  onChange={e => setNewIssue({ ...newIssue, assignee: e.target.value })}
-                  placeholder="Who's responsible?"
-                  style={{
-                    width: '100%',
-                    padding: '12px 16px',
-                    background: 'rgba(15, 23, 42, 0.6)',
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    borderRadius: 8,
-                    color: '#E2E8F0',
-                    fontSize: 14
-                  }}
-                />
-              </div>
-
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
               <button
-                onClick={addIssue}
-                disabled={!newIssue.title.trim()}
+                onClick={() => { setShowAddModal(false); setNewIssue({ title: '', description: '', department: '', priority: 'Medium', status: 'Open', assignee: '' }); }}
                 style={{
-                  padding: '14px',
-                  background: newIssue.title.trim() ? '#3B82F6' : 'rgba(59, 130, 246, 0.3)',
+                  background: 'rgba(255,255,255,0.1)',
                   border: 'none',
-                  borderRadius: 8,
+                  borderRadius: '8px',
+                  padding: '10px 20px',
+                  color: '#94A3B8',
+                  cursor: 'pointer'
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleAddIssue}
+                style={{
+                  background: '#3B82F6',
+                  border: 'none',
+                  borderRadius: '8px',
+                  padding: '10px 20px',
                   color: 'white',
-                  fontWeight: 600,
-                  cursor: newIssue.title.trim() ? 'pointer' : 'not-allowed'
+                  cursor: 'pointer'
                 }}
               >
                 Create Issue
@@ -664,104 +636,176 @@ export default function Issues({
 
       {/* Edit Issue Modal */}
       {editingIssue && (
-        <div style={modalOverlay} onClick={() => setEditingIssue(null)}>
-          <div style={modalContent} onClick={e => e.stopPropagation()}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-              <h2 style={{ fontSize: 20, fontWeight: 700 }}>Edit Issue</h2>
-              <button onClick={() => setEditingIssue(null)} style={{ background: 'transparent', border: 'none', color: '#94A3B8', cursor: 'pointer' }}>
-                <X size={20} />
-              </button>
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(0,0,0,0.8)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 100
+        }}>
+          <div style={{
+            background: '#1E293B',
+            borderRadius: '16px',
+            padding: '24px',
+            width: '500px',
+            maxWidth: '90vw'
+          }}>
+            <h2 style={{ color: '#E2E8F0', fontSize: '20px', marginBottom: '20px' }}>Edit Issue</h2>
+
+            <input
+              type="text"
+              placeholder="Issue title"
+              value={editingIssue.title}
+              onChange={(e) => setEditingIssue({ ...editingIssue, title: e.target.value })}
+              style={{
+                width: '100%',
+                background: 'rgba(15, 23, 42, 0.8)',
+                border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: '8px',
+                padding: '12px',
+                color: '#E2E8F0',
+                marginBottom: '12px',
+                fontSize: '14px',
+                boxSizing: 'border-box'
+              }}
+            />
+
+            <textarea
+              placeholder="Description"
+              value={editingIssue.description || ''}
+              onChange={(e) => setEditingIssue({ ...editingIssue, description: e.target.value })}
+              style={{
+                width: '100%',
+                background: 'rgba(15, 23, 42, 0.8)',
+                border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: '8px',
+                padding: '12px',
+                color: '#E2E8F0',
+                marginBottom: '12px',
+                fontSize: '14px',
+                minHeight: '80px',
+                resize: 'vertical',
+                boxSizing: 'border-box'
+              }}
+            />
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
+              <select
+                value={editingIssue.department}
+                onChange={(e) => setEditingIssue({ ...editingIssue, department: e.target.value })}
+                style={{
+                  background: 'rgba(15, 23, 42, 0.8)',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  borderRadius: '8px',
+                  padding: '12px',
+                  color: '#E2E8F0',
+                  fontSize: '14px'
+                }}
+              >
+                <option value="">Select department</option>
+                {departments.map(d => (
+                  <option key={d.id} value={d.id}>{d.name}</option>
+                ))}
+              </select>
+
+              <select
+                value={editingIssue.priority}
+                onChange={(e) => setEditingIssue({ ...editingIssue, priority: e.target.value })}
+                style={{
+                  background: 'rgba(15, 23, 42, 0.8)',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  borderRadius: '8px',
+                  padding: '12px',
+                  color: '#E2E8F0',
+                  fontSize: '14px'
+                }}
+              >
+                <option value="Low">Low Priority</option>
+                <option value="Medium">Medium Priority</option>
+                <option value="High">High Priority</option>
+              </select>
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              <div>
-                <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: '#94A3B8' }}>Title</label>
-                <input
-                  value={editingIssue.title}
-                  onChange={e => setEditingIssue({ ...editingIssue, title: e.target.value })}
-                  style={{
-                    width: '100%',
-                    padding: '12px 16px',
-                    background: 'rgba(15, 23, 42, 0.6)',
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    borderRadius: 8,
-                    color: '#E2E8F0',
-                    fontSize: 14
-                  }}
-                />
-              </div>
-
-              <div>
-                <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: '#94A3B8' }}>Description</label>
-                <textarea
-                  value={editingIssue.description || ''}
-                  onChange={e => setEditingIssue({ ...editingIssue, description: e.target.value })}
-                  rows={3}
-                  style={{
-                    width: '100%',
-                    padding: '12px 16px',
-                    background: 'rgba(15, 23, 42, 0.6)',
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    borderRadius: 8,
-                    color: '#E2E8F0',
-                    fontSize: 14,
-                    resize: 'none'
-                  }}
-                />
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                <div>
-                  <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: '#94A3B8' }}>Priority</label>
-                  <select
-                    value={editingIssue.priority}
-                    onChange={e => setEditingIssue({ ...editingIssue, priority: e.target.value })}
-                    style={{
-                      width: '100%',
-                      padding: '12px 16px',
-                      background: 'rgba(15, 23, 42, 0.6)',
-                      border: '1px solid rgba(255,255,255,0.1)',
-                      borderRadius: 8,
-                      color: '#E2E8F0',
-                      fontSize: 14
-                    }}
-                  >
-                    <option value="Low">Low</option>
-                    <option value="Medium">Medium</option>
-                    <option value="High">High</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: '#94A3B8' }}>Assignee</label>
-                  <input
-                    value={editingIssue.assignee || ''}
-                    onChange={e => setEditingIssue({ ...editingIssue, assignee: e.target.value })}
-                    style={{
-                      width: '100%',
-                      padding: '12px 16px',
-                      background: 'rgba(15, 23, 42, 0.6)',
-                      border: '1px solid rgba(255,255,255,0.1)',
-                      borderRadius: 8,
-                      color: '#E2E8F0',
-                      fontSize: 14
-                    }}
-                  />
-                </div>
-              </div>
-
-              <button
-                onClick={() => {
-                  updateIssue(editingIssue.id, editingIssue);
-                  setEditingIssue(null);
-                }}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
+              <select
+                value={editingIssue.status}
+                onChange={(e) => setEditingIssue({ ...editingIssue, status: e.target.value })}
                 style={{
-                  padding: '14px',
+                  background: 'rgba(15, 23, 42, 0.8)',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  borderRadius: '8px',
+                  padding: '12px',
+                  color: '#E2E8F0',
+                  fontSize: '14px'
+                }}
+              >
+                <option value="Open">Open</option>
+                <option value="In Progress">In Progress</option>
+                <option value="Resolved">Resolved</option>
+              </select>
+
+              <input
+                type="text"
+                placeholder="Assignee"
+                value={editingIssue.assignee || ''}
+                onChange={(e) => setEditingIssue({ ...editingIssue, assignee: e.target.value })}
+                style={{
+                  background: 'rgba(15, 23, 42, 0.8)',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  borderRadius: '8px',
+                  padding: '12px',
+                  color: '#E2E8F0',
+                  fontSize: '14px',
+                  boxSizing: 'border-box'
+                }}
+              />
+            </div>
+
+            {editingIssue.status === 'Resolved' && (
+              <textarea
+                placeholder="Resolution notes (optional)"
+                value={editingIssue.resolutionNotes || ''}
+                onChange={(e) => setEditingIssue({ ...editingIssue, resolutionNotes: e.target.value })}
+                style={{
+                  width: '100%',
+                  background: 'rgba(16, 185, 129, 0.1)',
+                  border: '1px solid rgba(16, 185, 129, 0.2)',
+                  borderRadius: '8px',
+                  padding: '12px',
+                  color: '#E2E8F0',
+                  marginBottom: '12px',
+                  fontSize: '14px',
+                  minHeight: '60px',
+                  resize: 'vertical',
+                  boxSizing: 'border-box'
+                }}
+              />
+            )}
+
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '20px' }}>
+              <button
+                onClick={() => setEditingIssue(null)}
+                style={{
+                  background: 'rgba(255,255,255,0.1)',
+                  border: 'none',
+                  borderRadius: '8px',
+                  padding: '10px 20px',
+                  color: '#94A3B8',
+                  cursor: 'pointer'
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleUpdateIssue}
+                style={{
                   background: '#3B82F6',
                   border: 'none',
-                  borderRadius: 8,
+                  borderRadius: '8px',
+                  padding: '10px 20px',
                   color: 'white',
-                  fontWeight: 600,
                   cursor: 'pointer'
                 }}
               >
