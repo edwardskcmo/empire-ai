@@ -22,6 +22,8 @@ export default function VoiceModal({
   const recognitionRef = useRef(null);
   const synthRef = useRef(window.speechSynthesis);
   const utteranceRef = useRef(null);
+  const autoRestartTimeoutRef = useRef(null);
+  const shouldAutoRestartRef = useRef(true);
 
   // Check browser support
   const isSupported = 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window;
@@ -40,11 +42,11 @@ export default function VoiceModal({
         let interimTranscript = '';
 
         for (let i = event.resultIndex; i < event.results.length; i++) {
-          const transcript = event.results[i][0].transcript;
+          const transcriptText = event.results[i][0].transcript;
           if (event.results[i].isFinal) {
-            finalTranscript += transcript;
+            finalTranscript += transcriptText;
           } else {
-            interimTranscript += transcript;
+            interimTranscript += transcriptText;
           }
         }
 
@@ -71,14 +73,15 @@ export default function VoiceModal({
       };
 
       recognitionRef.current.onend = () => {
-        // Only reset to idle if we're still in listening mode (not processing)
-        if (status === 'listening') {
-          setStatus('idle');
-        }
+        // Recognition ended - status will be managed by handleUserInput or error handler
       };
     }
 
     return () => {
+      // Cleanup on unmount
+      if (autoRestartTimeoutRef.current) {
+        clearTimeout(autoRestartTimeoutRef.current);
+      }
       if (recognitionRef.current) {
         recognitionRef.current.abort();
       }
@@ -105,15 +108,14 @@ export default function VoiceModal({
       }
     }
 
-    // Include connected docs/sheets content
+    // Include connected docs/sheets content - THIS IS KEY FOR SPREADSHEET ACCESS
     if (connectedDocs && connectedDocs.length > 0) {
       const syncedDocs = connectedDocs.filter(d => d.status === 'synced' && d.content);
       if (syncedDocs.length > 0) {
         context += '\n\nConnected Google Docs/Sheets data:\n';
-        syncedDocs.forEach((doc, i) => {
-          // Include first 1000 chars of each synced doc
+        syncedDocs.forEach((doc) => {
           context += `\n--- ${doc.name} (${doc.department || 'General'}) ---\n`;
-          context += doc.content?.substring(0, 1000) + (doc.content?.length > 1000 ? '...' : '') + '\n';
+          context += doc.content?.substring(0, 1500) + (doc.content?.length > 1500 ? '...' : '') + '\n';
         });
       }
     }
@@ -124,7 +126,7 @@ export default function VoiceModal({
         ? knowledge.filter(k => k.department === activeDepartment.id || k.department === 'company-wide')
         : knowledge;
       
-      if (deptKnowledge.length > 0 && !context.includes('Knowledge')) {
+      if (deptKnowledge.length > 0 && !context.includes('Knowledge base items')) {
         context += '\n\nKnowledge base items:\n';
         deptKnowledge.slice(0, 3).forEach((item, i) => {
           context += `${i + 1}. ${item.title}: ${item.content?.substring(0, 200)}...\n`;
@@ -257,11 +259,14 @@ export default function VoiceModal({
 
     utterance.onend = () => {
       setStatus('idle');
+      
       // Auto-start listening again for continuous conversation
-      setTimeout(() => {
-        if (status !== 'idle') return; // Prevent double-start
-        startListening();
-      }, 500);
+      // Use ref to check if we should continue (avoids stale closure)
+      if (shouldAutoRestartRef.current) {
+        autoRestartTimeoutRef.current = setTimeout(() => {
+          startListening();
+        }, 800);
+      }
     };
 
     utterance.onerror = (e) => {
@@ -279,9 +284,15 @@ export default function VoiceModal({
       return;
     }
 
+    // Clear any pending auto-restart
+    if (autoRestartTimeoutRef.current) {
+      clearTimeout(autoRestartTimeoutRef.current);
+    }
+
     setError('');
     setTranscript('');
     setStatus('listening');
+    shouldAutoRestartRef.current = true;
 
     try {
       recognitionRef.current.start();
@@ -292,6 +303,14 @@ export default function VoiceModal({
   };
 
   const stopAll = () => {
+    // Disable auto-restart
+    shouldAutoRestartRef.current = false;
+    
+    // Clear any pending auto-restart timeout
+    if (autoRestartTimeoutRef.current) {
+      clearTimeout(autoRestartTimeoutRef.current);
+    }
+    
     if (recognitionRef.current) {
       recognitionRef.current.abort();
     }
@@ -299,6 +318,11 @@ export default function VoiceModal({
       synthRef.current.cancel();
     }
     setStatus('idle');
+  };
+
+  const handleClose = () => {
+    stopAll();
+    onClose();
   };
 
   const getOrbStyle = () => {
@@ -395,7 +419,7 @@ export default function VoiceModal({
             </p>
           </div>
           <button
-            onClick={onClose}
+            onClick={handleClose}
             style={{
               background: 'rgba(255,255,255,0.1)',
               border: 'none',
