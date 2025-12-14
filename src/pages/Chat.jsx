@@ -62,7 +62,7 @@ export default function Chat({
         context += '\n\nConnected Google Docs/Sheets data:\n';
         syncedDocs.forEach((doc) => {
           context += `\n--- ${doc.name} (${doc.department || 'General'}) ---\n`;
-          context += doc.content?.substring(0, 1500) + (doc.content?.length > 1500 ? '...' : '') + '\n';
+          context += doc.content?.substring(0, 15000) + (doc.content?.length > 15000 ? '...' : '') + '\n';
         });
       }
     }
