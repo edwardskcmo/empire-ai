@@ -115,7 +115,7 @@ export default function VoiceModal({
         context += '\n\nConnected Google Docs/Sheets data:\n';
         syncedDocs.forEach((doc) => {
           context += `\n--- ${doc.name} (${doc.department || 'General'}) ---\n`;
-          context += doc.content?.substring(0, 15000) + (doc.content?.length > 15000 ? '...' : '') + '\n';
+          context += doc.content?.substring(0, 50000) + (doc.content?.length > 50000 ? '...' : '') + '\n';
         });
       }
     }
