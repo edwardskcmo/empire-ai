@@ -328,6 +328,7 @@ Example good responses:
 
   const speakWithElevenLabs = async (text) => {
     setStatus('speaking');
+    setDebugInfo('Calling ElevenLabs...');
     
     try {
       const response = await fetch('/api/text-to-speech', {
@@ -336,9 +337,12 @@ Example good responses:
         body: JSON.stringify({ text })
       });
       
+      setDebugInfo(`ElevenLabs response: ${response.status}`);
+      
       if (!response.ok) {
-        // Fallback to browser speech if ElevenLabs fails
-        console.warn('ElevenLabs failed, falling back to browser speech');
+        const errorData = await response.json().catch(() => ({}));
+        console.warn('ElevenLabs failed:', response.status, errorData);
+        setDebugInfo(`ElevenLabs error: ${response.status} - ${errorData.error || 'Unknown'}`);
         fallbackToWebSpeech(text);
         return;
       }
