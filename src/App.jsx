@@ -135,17 +135,35 @@ export default function App() {
     setConnectedDocs(updated);
   };
 
-  // Log activity
+  // Log activity (also adds to Central Intelligence)
   const logActivity = (text, type = 'general', department = null, user = 'You') => {
+    const deptName = department || activeDepartment?.name || 'General';
+    const deptId = department ? departments.find(d => d.name === department)?.id : activeDepartment?.id || 'general';
+    
     const activity = {
       id: `activity_${Date.now()}`,
       text,
       type,
-      department: department || activeDepartment?.name || 'General',
+      department: deptName,
       user: user,
       timestamp: new Date().toISOString()
     };
     setActivities(prev => [activity, ...prev].slice(0, 50));
+    
+    // Also add to Central Intelligence for AI awareness
+    const intelligenceItem = {
+      id: `intel_activity_${Date.now()}`,
+      sourceType: 'activity_log',
+      sourceId: activity.id,
+      title: `Activity: ${text}`,
+      content: `${user} performed action in ${deptName}: ${text}`,
+      department: deptId,
+      tags: extractTags(text).concat(['activity', type, deptName.toLowerCase().replace(/[^a-z0-9]/g, '-')]),
+      metadata: { user, type, department: deptName },
+      createdAt: activity.timestamp,
+      relevanceBoost: 1
+    };
+    setIntelligenceIndex(prev => [intelligenceItem, ...prev].slice(0, 500));
   };
 
   // Add to intelligence
