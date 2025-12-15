@@ -10,7 +10,8 @@ export default function VoiceModal({
   logActivity,
   addToIntelligence,
   knowledge,
-  connectedDocs
+  connectedDocs,
+  issues
 }) {
   const [status, setStatus] = useState('idle'); // idle, listening, processing, speaking
   const [transcript, setTranscript] = useState('');
@@ -120,6 +121,32 @@ export default function VoiceModal({
       }
     }
 
+    // Include issues board data
+    if (issues && issues.length > 0) {
+      const activeIssues = issues.filter(i => !i.archived);
+      const resolvedIssues = issues.filter(i => i.archived || i.status === 'Resolved');
+      
+      if (activeIssues.length > 0) {
+        context += '\n\n=== ISSUES BOARD (Active Issues) ===\n';
+        activeIssues.forEach((issue, i) => {
+          context += `${i + 1}. [${issue.status}] [${issue.priority}] ${issue.title}`;
+          if (issue.department) context += ` (Dept: ${issue.department})`;
+          if (issue.assignee) context += ` - Assigned to: ${issue.assignee}`;
+          if (issue.description) context += `\n   Description: ${issue.description}`;
+          context += `\n   Created: ${new Date(issue.createdAt).toLocaleDateString()}\n`;
+        });
+      }
+      
+      if (resolvedIssues.length > 0) {
+        context += '\n=== RESOLVED/ARCHIVED ISSUES ===\n';
+        resolvedIssues.slice(0, 10).forEach((issue, i) => {
+          context += `${i + 1}. ${issue.title} - ${issue.status}`;
+          if (issue.resolutionNotes) context += `\n   Resolution: ${issue.resolutionNotes}`;
+          context += '\n';
+        });
+      }
+    }
+
     // Include relevant knowledge items
     if (knowledge && knowledge.length > 0) {
       const deptKnowledge = activeDepartment 
@@ -168,6 +195,12 @@ A: "Project 16 is the Johnson Kitchen Remodel."
 
 Q: "What's the total contract value?"
 A: "The total contract value is $2.4 million."
+
+Q: "How many issues are open?"
+A: "You have 3 open issues."
+
+Q: "What issues do we have?"
+A: "You have 3 issues: one about permits, one about materials, and one about scheduling."
 
 WRONG (too long):
 "Project 16 is the Johnson Kitchen Remodel, which is a $45,000 project that started on March 15th. The scope includes cabinet refacing, new countertops, and plumbing updates. The project manager is..."
