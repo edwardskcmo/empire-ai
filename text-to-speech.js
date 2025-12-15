@@ -1,8 +1,5 @@
-// ElevenLabs Text-to-Speech API Endpoint
-// Converts text to natural-sounding speech
-
 export default async function handler(req, res) {
-  // Only allow POST requests
+  // Only allow POST
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
@@ -17,14 +14,18 @@ export default async function handler(req, res) {
   const voiceId = process.env.ELEVENLABS_VOICE_ID;
 
   if (!apiKey) {
-    return res.status(401).json({ error: 'ELEVENLABS_API_KEY not configured' });
+    console.error('ELEVENLABS_API_KEY not configured');
+    return res.status(500).json({ error: 'ElevenLabs API key not configured' });
   }
 
   if (!voiceId) {
-    return res.status(401).json({ error: 'ELEVENLABS_VOICE_ID not configured' });
+    console.error('ELEVENLABS_VOICE_ID not configured');
+    return res.status(500).json({ error: 'ElevenLabs Voice ID not configured' });
   }
 
   try {
+    console.log('Calling ElevenLabs API for voice:', voiceId);
+    
     const response = await fetch(
       `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
       {
@@ -47,18 +48,19 @@ export default async function handler(req, res) {
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('ElevenLabs API error:', response.status, errorText);
+      console.error('ElevenLabs error:', response.status, errorText);
       return res.status(response.status).json({ 
-        error: `ElevenLabs API error: ${response.status}`,
+        error: `ElevenLabs error: ${response.status}`,
         details: errorText
       });
     }
 
     // Get audio as array buffer
-    const audioBuffer = await response.arrayBuffer();
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    const base64Audio = buffer.toString('base64');
     
-    // Convert to base64
-    const base64Audio = Buffer.from(audioBuffer).toString('base64');
+    console.log('ElevenLabs success, audio size:', buffer.length);
     
     return res.status(200).json({ 
       audio: base64Audio,
@@ -66,7 +68,10 @@ export default async function handler(req, res) {
     });
 
   } catch (error) {
-    console.error('Text-to-speech error:', error);
-    return res.status(500).json({ error: 'Failed to generate speech' });
+    console.error('Text-to-speech error:', error.message);
+    return res.status(500).json({ 
+      error: 'Failed to generate speech',
+      details: error.message 
+    });
   }
 }
