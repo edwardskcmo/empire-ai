@@ -251,7 +251,28 @@ export default function Dashboard({
                 borderRadius: '8px'
               }}>
                 <CheckCircle size={16} style={{ color: '#10B981', flexShrink: 0 }} />
-                <span style={{ color: '#E2E8F0', fontSize: '14px', flex: 1 }}>{activity.text}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '2px' }}>
+                    <span style={{ 
+                      color: '#3B82F6', 
+                      fontSize: '13px', 
+                      fontWeight: '600'
+                    }}>
+                      {activity.user || 'You'}
+                    </span>
+                    <span style={{ color: '#64748B', fontSize: '12px' }}>•</span>
+                    <span style={{ 
+                      color: '#8B5CF6', 
+                      fontSize: '12px',
+                      background: 'rgba(139, 92, 246, 0.15)',
+                      padding: '2px 8px',
+                      borderRadius: '4px'
+                    }}>
+                      {activity.department || 'General'}
+                    </span>
+                  </div>
+                  <span style={{ color: '#E2E8F0', fontSize: '14px' }}>{activity.text}</span>
+                </div>
                 <span style={{ color: '#64748B', fontSize: '12px', flexShrink: 0 }}>{formatTimeAgo(activity.timestamp)}</span>
               </div>
             ))}
