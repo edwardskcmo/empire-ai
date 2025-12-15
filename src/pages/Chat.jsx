@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { MessageSquare, Send, Sparkles, FileText } from 'lucide-react';
+import { MessageSquare, Send, Sparkles, FileText, CheckCircle } from 'lucide-react';
 
 export default function Chat({
   activeDepartment,
@@ -12,10 +12,13 @@ export default function Chat({
   addToIntelligence,
   knowledge,
   connectedDocs,
-  issues
+  issues,
+  setIssues,
+  departments
 }) {
   const [message, setMessage] = useState('');
   const [isThinking, setIsThinking] = useState(false);
+  const [issueCreated, setIssueCreated] = useState(null);
   const messagesEndRef = useRef(null);
 
   const deptId = activeDepartment?.id || 'general';
@@ -38,6 +41,14 @@ export default function Chat({
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [deptMessages, isThinking]);
+
+  // Clear issue created notification after 5 seconds
+  useEffect(() => {
+    if (issueCreated) {
+      const timer = setTimeout(() => setIssueCreated(null), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [issueCreated]);
 
   const buildKnowledgeContext = (query) => {
     let context = '';
@@ -111,6 +122,80 @@ export default function Chat({
     return context;
   };
 
+  // Parse AI response for issue creation command
+  const parseIssueFromResponse = (response) => {
+    // Look for the issue creation marker
+    const issueMatch = response.match(/\[ISSUE_CREATED\]\s*([^|]+)\s*\|\s*(High|Medium|Low)\s*\|\s*([^|]+)\s*\|\s*(.+?)(?:\[\/ISSUE_CREATED\]|$)/i);
+    
+    if (issueMatch) {
+      return {
+        title: issueMatch[1].trim(),
+        priority: issueMatch[2].trim(),
+        department: issueMatch[3].trim(),
+        description: issueMatch[4].trim().replace(/\[\/ISSUE_CREATED\]/i, '').trim()
+      };
+    }
+    return null;
+  };
+
+  // Create issue in the system
+  const createIssue = (issueData) => {
+    // Find matching department ID
+    let deptIdForIssue = deptId;
+    if (departments && issueData.department) {
+      const matchedDept = departments.find(d => 
+        d.name.toLowerCase().includes(issueData.department.toLowerCase()) ||
+        issueData.department.toLowerCase().includes(d.name.toLowerCase())
+      );
+      if (matchedDept) {
+        deptIdForIssue = matchedDept.id;
+      }
+    }
+
+    const newIssue = {
+      id: `issue_${Date.now()}`,
+      title: issueData.title,
+      description: issueData.description,
+      department: deptIdForIssue,
+      priority: issueData.priority,
+      status: 'Open',
+      assignee: '',
+      createdAt: new Date().toISOString(),
+      archived: false
+    };
+
+    setIssues(prev => [newIssue, ...prev]);
+    
+    // Log to activity
+    if (logActivity) {
+      logActivity(`Issue created via chat: ${issueData.title}`, 'issue');
+    }
+
+    // Add to intelligence
+    if (addToIntelligence) {
+      addToIntelligence({
+        sourceType: 'issue_created',
+        sourceId: newIssue.id,
+        title: `Issue: ${issueData.title}`,
+        content: `New issue created: ${issueData.title}. Priority: ${issueData.priority}. ${issueData.description}`,
+        department: deptIdForIssue,
+        tags: ['issue', 'open', issueData.priority.toLowerCase()],
+        metadata: { priority: issueData.priority },
+        relevanceBoost: issueData.priority === 'High' ? 3 : issueData.priority === 'Medium' ? 2 : 1
+      });
+    }
+
+    return newIssue;
+  };
+
+  // Clean the AI response for display (remove the issue creation markup)
+  const cleanResponseForDisplay = (response) => {
+    return response
+      .replace(/\[ISSUE_CREATED\].*?\[\/ISSUE_CREATED\]/gis, '')
+      .replace(/\[ISSUE_CREATED\].*$/gis, '')
+      .trim();
+  };
+
   const sendMessage = async (overrideMessage) => {
     const textToSend = overrideMessage || message;
     if (!textToSend.trim() || isThinking) return;
@@ -134,8 +219,29 @@ export default function Chat({
     // Build context
     const knowledgeContext = buildKnowledgeContext(textToSend);
 
-    // Build system prompt
-    let systemPrompt = `You are Empire AI, the operational intelligence assistant for Empire Remodeling. You help with questions, tasks, and decisions across all departments. Be helpful, concise, and reference company data when relevant.`;
+    // Build department list for AI
+    const deptList = departments ? departments.map(d => d.name).join(', ') : 'General';
+
+    // Build system prompt with issue creation capability
+    let systemPrompt = `You are Empire AI, the operational intelligence assistant for Empire Remodeling. You help with questions, tasks, and decisions across all departments. Be helpful, concise, and reference company data when relevant.
+
+=== ISSUE CREATION CAPABILITY ===
+You can create issues on the Issues Board. When a user asks you to create, log, add, or report an issue:
+1. Acknowledge their request
+2. Include this EXACT format at the END of your response:
+[ISSUE_CREATED] Issue Title | Priority | Department | Description [/ISSUE_CREATED]
+
+Priority must be: High, Medium, or Low
+Department must be one of: ${deptList}
+
+Example - if user says "create an issue about the permit delay on the Johnson project":
+"I'll create that issue for you now.
+[ISSUE_CREATED] Permit delay - Johnson project | High | Production & Project Management | Permit approval is delayed for the Johnson project, causing scheduling issues [/ISSUE_CREATED]"
+
+If the user doesn't specify priority, use Medium.
+If the user doesn't specify department, use the current department or best match.
+Always include the [ISSUE_CREATED] marker when creating an issue - this triggers the actual creation.
+=== END ISSUE CREATION ===`;
 
     if (activeDepartment) {
       systemPrompt += `\n\nCurrent Department: ${activeDepartment.name}`;
@@ -177,7 +283,19 @@ export default function Chat({
       }
 
       const data = await res.json();
-      const aiResponse = data.response || "I'm sorry, I couldn't process that request.";
+      let aiResponse = data.response || "I'm sorry, I couldn't process that request.";
+
+      // Check if AI created an issue
+      const issueData = parseIssueFromResponse(aiResponse);
+      if (issueData && setIssues) {
+        const createdIssue = createIssue(issueData);
+        setIssueCreated(createdIssue);
+        // Clean the response for display
+        aiResponse = cleanResponseForDisplay(aiResponse);
+        if (!aiResponse) {
+          aiResponse = `I've created the issue "${issueData.title}" with ${issueData.priority} priority. You can view it on the Issues board.`;
+        }
+      }
 
       const assistantMessage = {
         id: `msg_${Date.now()}`,
@@ -254,6 +372,32 @@ export default function Chat({
       flexDirection: 'column',
       padding: '24px'
     }}>
+      {/* Issue Created Notification */}
+      {issueCreated && (
+        <div style={{
+          position: 'fixed',
+          top: '24px',
+          right: '24px',
+          background: 'rgba(16, 185, 129, 0.95)',
+          borderRadius: '12px',
+          padding: '16px 20px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '12px',
+          boxShadow: '0 4px 20px rgba(16, 185, 129, 0.3)',
+          zIndex: 100,
+          animation: 'slideIn 0.3s ease'
+        }}>
+          <CheckCircle size={24} style={{ color: 'white' }} />
+          <div>
+            <p style={{ color: 'white', fontWeight: '600', margin: 0 }}>Issue Created</p>
+            <p style={{ color: 'rgba(255,255,255,0.8)', fontSize: '13px', margin: '4px 0 0 0' }}>
+              {issueCreated.title}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div style={{
         background: 'rgba(30, 41, 59, 0.8)',
@@ -323,6 +467,9 @@ export default function Chat({
             </p>
             <p style={{ color: '#64748B', fontSize: '14px' }}>
               Ask Empire AI anything about {activeDepartment?.name || 'your business'}
+            </p>
+            <p style={{ color: '#64748B', fontSize: '13px', marginTop: '12px' }}>
+              💡 Tip: Say "create an issue about..." to log issues directly
             </p>
           </div>
         )}
@@ -460,11 +607,15 @@ export default function Chat({
         </button>
       </div>
 
-      {/* CSS for thinking animation */}
+      {/* CSS for animations */}
       <style>{`
         @keyframes thinking {
           0%, 80%, 100% { transform: scale(0); opacity: 0.5; }
           40% { transform: scale(1); opacity: 1; }
+        }
+        @keyframes slideIn {
+          from { transform: translateX(100px); opacity: 0; }
+          to { transform: translateX(0); opacity: 1; }
         }
       `}</style>
     </div>
