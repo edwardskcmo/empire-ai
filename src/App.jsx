@@ -136,11 +136,13 @@ export default function App() {
   };
 
   // Log activity
-  const logActivity = (text, type = 'general') => {
+  const logActivity = (text, type = 'general', department = null, user = 'You') => {
     const activity = {
       id: `activity_${Date.now()}`,
       text,
       type,
+      department: department || activeDepartment?.name || 'General',
+      user: user,
       timestamp: new Date().toISOString()
     };
     setActivities(prev => [activity, ...prev].slice(0, 50));
