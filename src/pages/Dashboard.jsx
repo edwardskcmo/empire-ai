@@ -99,34 +99,12 @@ export default function Dashboard({
         <p style={{ color: '#94A3B8', marginTop: '4px' }}>Welcome back to Empire AI</p>
       </div>
 
-      {/* Stats Cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '24px' }}>
-        {stats.map((stat, i) => (
-          <div key={i} style={{
-            background: 'rgba(30, 41, 59, 0.8)',
-            borderRadius: '12px',
-            padding: '20px',
-            border: '1px solid rgba(255,255,255,0.06)'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div>
-                <p style={{ color: '#94A3B8', fontSize: '14px', marginBottom: '4px' }}>{stat.label}</p>
-                <p style={{ color: '#E2E8F0', fontSize: '32px', fontWeight: '700', fontFamily: 'Space Mono, monospace' }}>
-                  {stat.value}
-                </p>
-              </div>
-              <stat.icon size={40} style={{ color: stat.color, opacity: 0.8 }} />
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Quick Chat Box */}
+      {/* Quick Chat Box - NOW AT TOP */}
       <div style={{
         background: 'rgba(30, 41, 59, 0.8)',
         borderRadius: '12px',
         padding: '20px',
-        marginBottom: '24px',
+        marginBottom: '20px',
         border: '1px solid rgba(255,255,255,0.06)'
       }}>
         <h3 style={{ color: '#E2E8F0', fontSize: '16px', fontWeight: '600', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -206,8 +184,49 @@ export default function Dashboard({
         </div>
       </div>
 
+      {/* Stats Cards - COMPACT VERSION */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px', marginBottom: '20px' }}>
+        {stats.map((stat, i) => (
+          <div key={i} style={{
+            background: 'rgba(30, 41, 59, 0.8)',
+            borderRadius: '10px',
+            padding: '14px 16px',
+            border: '1px solid rgba(255,255,255,0.06)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '14px'
+          }}>
+            <div style={{
+              width: '42px',
+              height: '42px',
+              borderRadius: '10px',
+              background: `${stat.color}20`,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0
+            }}>
+              <stat.icon size={22} style={{ color: stat.color }} />
+            </div>
+            <div>
+              <p style={{ 
+                color: '#E2E8F0', 
+                fontSize: '24px', 
+                fontWeight: '700', 
+                fontFamily: 'Space Mono, monospace',
+                lineHeight: 1,
+                margin: 0
+              }}>
+                {stat.value}
+              </p>
+              <p style={{ color: '#94A3B8', fontSize: '12px', margin: '2px 0 0 0' }}>{stat.label}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
       {/* Activity Feed & Quick Actions Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '24px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '20px' }}>
         
         {/* Activity Feed */}
         <div style={{
@@ -221,7 +240,7 @@ export default function Dashboard({
             Recent Activity
           </h3>
           
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             {activities.slice(0, 6).map((activity, i) => (
               <div key={i} style={{
                 display: 'flex',
