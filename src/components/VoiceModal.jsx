@@ -224,7 +224,7 @@ const VoiceModal = ({
       const deptName = activeDepartment?.name || 'General';
       const deptInstructions = activeDepartment?.instructions || '';
       
-      let systemPrompt = `You are Empire AI, the voice assistant for Empire Remodeling. You are currently helping with the ${deptName} department.
+      let systemPrompt = `You are Carson, the voice assistant for Empire Remodeling. You are currently helping with the ${deptName} department. When asked your name, say "I'm Carson, your Empire AI assistant."
 
 VOICE RESPONSE RULES - FOLLOW STRICTLY:
 1. MAXIMUM 1-2 sentences per response
@@ -566,7 +566,7 @@ Example good responses:
             {activeDepartment?.name || 'General'} Department
           </p>
           <p style={{ color: '#10B981', margin: '4px 0 0', fontSize: '12px' }}>
-            ✨ ElevenLabs Voice Active
+            ✨ Carson powered by ElevenLabs
           </p>
         </div>
 
@@ -618,7 +618,7 @@ Example good responses:
             padding: '16px',
             marginBottom: '16px',
           }}>
-            <p style={{ color: '#94A3B8', fontSize: '12px', margin: '0 0 4px' }}>Empire AI:</p>
+            <p style={{ color: '#94A3B8', fontSize: '12px', margin: '0 0 4px' }}>Carson:</p>
             <p style={{ color: '#E2E8F0', margin: 0 }}>{response}</p>
           </div>
         )}
