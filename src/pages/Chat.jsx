@@ -11,7 +11,8 @@ export default function Chat({
   logActivity,
   addToIntelligence,
   knowledge,
-  connectedDocs
+  connectedDocs,
+  issues
 }) {
   const [message, setMessage] = useState('');
   const [isThinking, setIsThinking] = useState(false);
@@ -63,6 +64,32 @@ export default function Chat({
         syncedDocs.forEach((doc) => {
           context += `\n--- ${doc.name} (${doc.department || 'General'}) ---\n`;
           context += doc.content?.substring(0, 50000) + (doc.content?.length > 50000 ? '...' : '') + '\n';
+        });
+      }
+    }
+
+    // Include issues board data
+    if (issues && issues.length > 0) {
+      const activeIssues = issues.filter(i => !i.archived);
+      const resolvedIssues = issues.filter(i => i.archived || i.status === 'Resolved');
+      
+      if (activeIssues.length > 0) {
+        context += '\n\n=== ISSUES BOARD (Active Issues) ===\n';
+        activeIssues.forEach((issue, i) => {
+          context += `${i + 1}. [${issue.status}] [${issue.priority}] ${issue.title}`;
+          if (issue.department) context += ` (Dept: ${issue.department})`;
+          if (issue.assignee) context += ` - Assigned to: ${issue.assignee}`;
+          if (issue.description) context += `\n   Description: ${issue.description}`;
+          context += `\n   Created: ${new Date(issue.createdAt).toLocaleDateString()}\n`;
+        });
+      }
+      
+      if (resolvedIssues.length > 0) {
+        context += '\n=== RESOLVED/ARCHIVED ISSUES ===\n';
+        resolvedIssues.slice(0, 10).forEach((issue, i) => {
+          context += `${i + 1}. ${issue.title} - ${issue.status}`;
+          if (issue.resolutionNotes) context += `\n   Resolution: ${issue.resolutionNotes}`;
+          context += '\n';
         });
       }
     }
