@@ -2,8 +2,36 @@ import React, { useState } from 'react';
 import { 
   BookOpen, Plus, Upload, Lightbulb, MoreVertical, Edit2, Trash2,
   FileText, Link, ExternalLink, RefreshCw, X, CheckCircle, AlertCircle,
-  Loader
+  Loader, Building, TrendingUp, DollarSign, Wrench, Calculator, Users,
+  ShieldCheck, ClipboardCheck, Briefcase, Target, Package, Home, PiggyBank,
+  UserCheck, Shield, Clipboard, BarChart, Folder, Star, Heart, Zap, Globe,
+  Smartphone, Palette, Settings, LayoutDashboard, HelpCircle, MessageSquare
 } from 'lucide-react';
+
+// Icon mapping for string-to-component conversion
+const ICON_MAP = {
+  Building, TrendingUp, DollarSign, Wrench, Calculator, Users,
+  ShieldCheck, ClipboardCheck, Briefcase, Target, Lightbulb, Package,
+  Home, PiggyBank, UserCheck, Shield, Clipboard, BarChart, FileText,
+  Folder, Star, Heart, Zap, Globe, Smartphone, Palette, BookOpen,
+  Settings, LayoutDashboard, HelpCircle, MessageSquare
+};
+
+// Helper to render department icon (handles both emoji and Lucide icon names)
+const renderDeptIcon = (icon, size = 24, color = 'white') => {
+  if (!icon) return <Folder size={size} color={color} />;
+  
+  // Check if it's a Lucide icon name (string starting with capital letter, no emoji)
+  if (typeof icon === 'string' && /^[A-Z][a-zA-Z]+$/.test(icon)) {
+    const IconComponent = ICON_MAP[icon];
+    if (IconComponent) {
+      return <IconComponent size={size} color={color} />;
+    }
+  }
+  
+  // Otherwise treat as emoji
+  return <span style={{ fontSize: `${size}px`, lineHeight: 1 }}>{icon}</span>;
+};
 
 export default function Knowledge({
   departments,
@@ -283,10 +311,9 @@ export default function Knowledge({
             borderRadius: '12px',
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: '28px'
+            justifyContent: 'center'
           }}>
-            {dept?.icon || '📁'}
+            {renderDeptIcon(dept?.icon, 28, 'white')}
           </div>
           <div>
             <h1 style={{ color: '#E2E8F0', fontSize: '24px', fontWeight: '700', margin: 0 }}>
@@ -641,10 +668,9 @@ export default function Knowledge({
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                fontSize: '24px',
                 marginBottom: '12px'
               }}>
-                {dept.icon}
+                {renderDeptIcon(dept.icon, 24, 'white')}
               </div>
 
               {/* Count */}
