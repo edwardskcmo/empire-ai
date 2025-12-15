@@ -1,7 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { 
   LayoutDashboard, Settings, BookOpen, ClipboardList, MessageSquare, 
-  HelpCircle, Mic, ChevronLeft, ChevronRight, Plus, Search, Menu
+  HelpCircle, Mic, ChevronLeft, ChevronRight, Plus, Search, Menu,
+  Building, TrendingUp, DollarSign, Wrench, Calculator, Users, 
+  ShieldCheck, ClipboardCheck, Briefcase, Target, Lightbulb, Package,
+  Home, PiggyBank, UserCheck, Shield, Clipboard, BarChart, FileText,
+  Folder, Star, Heart, Zap, Globe, Smartphone, Palette
 } from 'lucide-react';
 
 // Import pages
@@ -25,6 +29,31 @@ import {
   queryIntelligence as queryIntel,
   getSourceLabel
 } from './utils';
+
+// Icon mapping for string-to-component conversion
+const ICON_MAP = {
+  Building, TrendingUp, DollarSign, Wrench, Calculator, Users,
+  ShieldCheck, ClipboardCheck, Briefcase, Target, Lightbulb, Package,
+  Home, PiggyBank, UserCheck, Shield, Clipboard, BarChart, FileText,
+  Folder, Star, Heart, Zap, Globe, Smartphone, Palette, BookOpen,
+  Settings, LayoutDashboard, HelpCircle, MessageSquare
+};
+
+// Helper to render department icon (handles both emoji and Lucide icon names)
+const renderDeptIcon = (icon, size = 16, color = 'currentColor') => {
+  if (!icon) return <Folder size={size} color={color} />;
+  
+  // Check if it's a Lucide icon name (string starting with capital letter, no emoji)
+  if (typeof icon === 'string' && /^[A-Z][a-zA-Z]+$/.test(icon)) {
+    const IconComponent = ICON_MAP[icon];
+    if (IconComponent) {
+      return <IconComponent size={size} color={color} />;
+    }
+  }
+  
+  // Otherwise treat as emoji
+  return <span style={{ fontSize: `${size}px`, lineHeight: 1 }}>{icon}</span>;
+};
 
 export default function App() {
   // Navigation state
@@ -401,7 +430,7 @@ export default function App() {
                     textAlign: 'left'
                   }}
                 >
-                  <span style={{ fontSize: '16px' }}>{dept.icon}</span>
+                  {renderDeptIcon(dept.icon, 16, activeDepartment?.id === dept.id ? '#E2E8F0' : '#94A3B8')}
                   <span style={{ 
                     overflow: 'hidden', 
                     textOverflow: 'ellipsis', 
