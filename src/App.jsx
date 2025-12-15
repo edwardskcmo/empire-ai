@@ -135,8 +135,29 @@ export default function App() {
     setConnectedDocs(updated);
   };
 
-  // Log activity (also adds to Central Intelligence)
-  const logActivity = (text, type = 'general', department = null, user = 'You') => {
+  // Generate smart tags using AI
+  const generateSmartTags = async (content, title, sourceType) => {
+    try {
+      const res = await fetch('/api/generate-tags', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content, title, sourceType })
+      });
+      const data = await res.json();
+      
+      if (data.tags && data.tags.length > 0) {
+        return data.tags;
+      }
+      // Fallback to keyword matching if API returns empty
+      return extractTags(content || title || '');
+    } catch (err) {
+      console.log('Smart tagging unavailable, using keyword matching');
+      return extractTags(content || title || '');
+    }
+  };
+
+  // Log activity (also adds to Central Intelligence with smart tags)
+  const logActivity = async (text, type = 'general', department = null, user = 'You') => {
     const deptName = department || activeDepartment?.name || 'General';
     const deptId = department ? departments.find(d => d.name === department)?.id : activeDepartment?.id || 'general';
     
@@ -150,6 +171,9 @@ export default function App() {
     };
     setActivities(prev => [activity, ...prev].slice(0, 50));
     
+    // Generate smart tags for the activity
+    const smartTags = await generateSmartTags(text, null, 'activity_log');
+    
     // Also add to Central Intelligence for AI awareness
     const intelligenceItem = {
       id: `intel_activity_${Date.now()}`,
@@ -158,7 +182,7 @@ export default function App() {
       title: `Activity: ${text}`,
       content: `${user} performed action in ${deptName}: ${text}`,
       department: deptId,
-      tags: extractTags(text).concat(['activity', type, deptName.toLowerCase().replace(/[^a-z0-9]/g, '-')]),
+      tags: smartTags.concat(['activity', type]),
       metadata: { user, type, department: deptName },
       createdAt: activity.timestamp,
       relevanceBoost: 1
@@ -166,8 +190,14 @@ export default function App() {
     setIntelligenceIndex(prev => [intelligenceItem, ...prev].slice(0, 500));
   };
 
-  // Add to intelligence
-  const addToIntelligence = (item) => {
+  // Add to intelligence (with smart tagging)
+  const addToIntelligence = async (item) => {
+    // Generate smart tags if not provided or empty
+    let tags = item.tags;
+    if (!tags || tags.length === 0) {
+      tags = await generateSmartTags(item.content, item.title, item.sourceType);
+    }
+    
     const newItem = {
       id: item.id || `intel_${Date.now()}`,
       sourceType: item.sourceType,
@@ -175,7 +205,7 @@ export default function App() {
       title: item.title,
       content: item.content,
       department: item.department,
-      tags: item.tags || extractTags(item.content || ''),
+      tags: tags,
       metadata: item.metadata || {},
       createdAt: new Date().toISOString(),
       relevanceBoost: item.relevanceBoost || 0
