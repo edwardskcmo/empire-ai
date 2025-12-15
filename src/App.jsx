@@ -179,6 +179,8 @@ export default function App() {
             knowledge={knowledge}
             connectedDocs={connectedDocs}
             issues={issues}
+            setIssues={setIssues}
+            departments={departments}
           />
         );
       case 'knowledge':
@@ -459,6 +461,8 @@ export default function App() {
           knowledge={knowledge}
           connectedDocs={connectedDocs}
           issues={issues}
+          setIssues={setIssues}
+          departments={departments}
         />
       )}
     </div>
