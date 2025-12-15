@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { X, Mic, Square, VolumeX, Volume2 } from 'lucide-react';
+import { X, Mic, Square, VolumeX, Volume2, CheckCircle } from 'lucide-react';
 
 export default function VoiceModal({
   onClose,
@@ -11,7 +11,9 @@ export default function VoiceModal({
   addToIntelligence,
   knowledge,
   connectedDocs,
-  issues
+  issues,
+  setIssues,
+  departments
 }) {
   const [status, setStatus] = useState('idle'); // idle, listening, processing, speaking
   const [transcript, setTranscript] = useState('');
@@ -19,6 +21,7 @@ export default function VoiceModal({
   const [isMuted, setIsMuted] = useState(false);
   const [error, setError] = useState('');
   const [conversationHistory, setConversationHistory] = useState([]);
+  const [issueCreated, setIssueCreated] = useState(null);
   
   const recognitionRef = useRef(null);
   const synthRef = useRef(window.speechSynthesis);
@@ -92,6 +95,14 @@ export default function VoiceModal({
     };
   }, []);
 
+  // Clear issue created notification after 5 seconds
+  useEffect(() => {
+    if (issueCreated) {
+      const timer = setTimeout(() => setIssueCreated(null), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [issueCreated]);
+
   const buildKnowledgeContext = (query) => {
     let context = '';
     
@@ -109,7 +120,7 @@ export default function VoiceModal({
       }
     }
 
-    // Include connected docs/sheets content - THIS IS KEY FOR SPREADSHEET ACCESS
+    // Include connected docs/sheets content
     if (connectedDocs && connectedDocs.length > 0) {
       const syncedDocs = connectedDocs.filter(d => d.status === 'synced' && d.content);
       if (syncedDocs.length > 0) {
@@ -164,16 +175,86 @@ export default function VoiceModal({
     return context;
   };
 
+  // Parse AI response for issue creation command
+  const parseIssueFromResponse = (response) => {
+    const issueMatch = response.match(/\[ISSUE_CREATED\]\s*([^|]+)\s*\|\s*(High|Medium|Low)\s*\|\s*([^|]+)\s*\|\s*(.+?)(?:\[\/ISSUE_CREATED\]|$)/i);
+    
+    if (issueMatch) {
+      return {
+        title: issueMatch[1].trim(),
+        priority: issueMatch[2].trim(),
+        department: issueMatch[3].trim(),
+        description: issueMatch[4].trim().replace(/\[\/ISSUE_CREATED\]/i, '').trim()
+      };
+    }
+    return null;
+  };
+
+  // Create issue in the system
+  const createIssue = (issueData) => {
+    let deptIdForIssue = activeDepartment?.id || 'general';
+    if (departments && issueData.department) {
+      const matchedDept = departments.find(d => 
+        d.name.toLowerCase().includes(issueData.department.toLowerCase()) ||
+        issueData.department.toLowerCase().includes(d.name.toLowerCase())
+      );
+      if (matchedDept) {
+        deptIdForIssue = matchedDept.id;
+      }
+    }
+
+    const newIssue = {
+      id: `issue_${Date.now()}`,
+      title: issueData.title,
+      description: issueData.description,
+      department: deptIdForIssue,
+      priority: issueData.priority,
+      status: 'Open',
+      assignee: '',
+      createdAt: new Date().toISOString(),
+      archived: false
+    };
+
+    setIssues(prev => [newIssue, ...prev]);
+    
+    if (logActivity) {
+      logActivity(`Issue created via voice: ${issueData.title}`, 'issue');
+    }
+
+    if (addToIntelligence) {
+      addToIntelligence({
+        sourceType: 'issue_created',
+        sourceId: newIssue.id,
+        title: `Issue: ${issueData.title}`,
+        content: `New issue created: ${issueData.title}. Priority: ${issueData.priority}. ${issueData.description}`,
+        department: deptIdForIssue,
+        tags: ['issue', 'open', issueData.priority.toLowerCase()],
+        metadata: { priority: issueData.priority },
+        relevanceBoost: issueData.priority === 'High' ? 3 : issueData.priority === 'Medium' ? 2 : 1
+      });
+    }
+
+    return newIssue;
+  };
+
+  // Clean the AI response for display
+  const cleanResponseForDisplay = (response) => {
+    return response
+      .replace(/\[ISSUE_CREATED\].*?\[\/ISSUE_CREATED\]/gis, '')
+      .replace(/\[ISSUE_CREATED\].*$/gis, '')
+      .trim();
+  };
+
   const handleUserInput = async (text) => {
     if (!text.trim()) return;
     
     setStatus('processing');
     setError('');
 
-    // Build context including connected sheets/docs
     const knowledgeContext = buildKnowledgeContext(text);
+    const deptList = departments ? departments.map(d => d.name).join(', ') : 'General';
 
-    // Build system prompt
+    // Build system prompt with issue creation capability
     let systemPrompt = `You are Empire AI, a voice assistant for Empire Remodeling.
 
 VOICE RESPONSE RULES - FOLLOW STRICTLY:
@@ -181,31 +262,32 @@ VOICE RESPONSE RULES - FOLLOW STRICTLY:
 2. Answer ONLY what was asked - stop immediately after
 3. NEVER volunteer extra information
 4. NEVER explain your reasoning
-5. NEVER list details unless asked "list them" or "what are they"
-6. If asked a number: say the number and stop
-7. If asked about a specific item: name it and stop
-8. User will say "tell me more" or "expand" if they want details
+5. If asked a number: say the number and stop
+6. If asked about a specific item: name it and stop
+
+=== ISSUE CREATION CAPABILITY ===
+You can create issues. When user asks to create, log, add, or report an issue:
+1. Say a brief confirmation (one sentence)
+2. Include this EXACT format at the END:
+[ISSUE_CREATED] Title | Priority | Department | Description [/ISSUE_CREATED]
+
+Priority: High, Medium, or Low (use Medium if not specified)
+Department: one of: ${deptList}
+
+Example - user says "create an issue about permit delay":
+"I'll create that issue now. [ISSUE_CREATED] Permit delay | Medium | Production & Project Management | Permit approval is delayed [/ISSUE_CREATED]"
+
+IMPORTANT: Always include [ISSUE_CREATED] marker when creating issues.
+=== END ISSUE CREATION ===
 
 EXAMPLES:
-Q: "How many projects do we have?" 
-A: "You have 54 projects."
-
-Q: "What's project 16?"
-A: "Project 16 is the Johnson Kitchen Remodel."
-
-Q: "What's the total contract value?"
-A: "The total contract value is $2.4 million."
-
-Q: "How many issues are open?"
+Q: "How many open issues?"
 A: "You have 3 open issues."
 
-Q: "What issues do we have?"
-A: "You have 3 issues: one about permits, one about materials, and one about scheduling."
+Q: "Create an issue about the supply shortage"
+A: "Done. [ISSUE_CREATED] Supply shortage | Medium | Production & Project Management | Materials supply shortage reported [/ISSUE_CREATED]"
 
-WRONG (too long):
-"Project 16 is the Johnson Kitchen Remodel, which is a $45,000 project that started on March 15th. The scope includes cabinet refacing, new countertops, and plumbing updates. The project manager is..."
-
-Be like a concise assistant giving quick facts. Stop talking after answering.`;
+Be concise. Stop talking after answering.`;
 
     if (activeDepartment) {
       systemPrompt += `\n\nCurrent Department: ${activeDepartment.name}`;
@@ -225,7 +307,6 @@ Be like a concise assistant giving quick facts. Stop talking after answering.`;
       systemPrompt += knowledgeContext;
     }
 
-    // Add conversation history for context
     const historyForAPI = conversationHistory.slice(-6).map(msg => ({
       role: msg.role,
       content: msg.content
@@ -247,18 +328,27 @@ Be like a concise assistant giving quick facts. Stop talking after answering.`;
       }
 
       const data = await res.json();
-      const aiResponse = data.response || "I'm sorry, I couldn't process that request.";
+      let aiResponse = data.response || "I'm sorry, I couldn't process that request.";
+
+      // Check if AI created an issue
+      const issueData = parseIssueFromResponse(aiResponse);
+      if (issueData && setIssues) {
+        const createdIssue = createIssue(issueData);
+        setIssueCreated(createdIssue);
+        aiResponse = cleanResponseForDisplay(aiResponse);
+        if (!aiResponse) {
+          aiResponse = `Created issue: ${issueData.title}`;
+        }
+      }
 
       setResponse(aiResponse);
       
-      // Update conversation history
       setConversationHistory(prev => [
         ...prev,
         { role: 'user', content: text },
         { role: 'assistant', content: aiResponse }
       ]);
 
-      // Log to intelligence
       if (addToIntelligence) {
         addToIntelligence({
           sourceType: 'voice_interaction',
@@ -272,12 +362,10 @@ Be like a concise assistant giving quick facts. Stop talking after answering.`;
         });
       }
 
-      // Log activity
       if (logActivity) {
         logActivity(`Voice conversation in ${activeDepartment?.name || 'General'}`, 'voice');
       }
 
-      // Speak the response
       if (!isMuted) {
         speakResponse(aiResponse);
       } else {
@@ -294,8 +382,6 @@ Be like a concise assistant giving quick facts. Stop talking after answering.`;
 
   const speakResponse = (text) => {
     setStatus('speaking');
-    
-    // Cancel any ongoing speech
     synthRef.current.cancel();
 
     const utterance = new SpeechSynthesisUtterance(text);
@@ -303,7 +389,6 @@ Be like a concise assistant giving quick facts. Stop talking after answering.`;
     utterance.pitch = 1.0;
     utterance.volume = 1.0;
 
-    // Try to get a natural voice
     const voices = synthRef.current.getVoices();
     const preferredVoice = voices.find(v => 
       v.name.includes('Samantha') || 
@@ -317,9 +402,6 @@ Be like a concise assistant giving quick facts. Stop talking after answering.`;
 
     utterance.onend = () => {
       setStatus('idle');
-      
-      // Auto-start listening again for continuous conversation
-      // Use ref to check if we should continue (avoids stale closure)
       if (shouldAutoRestartRef.current) {
         autoRestartTimeoutRef.current = setTimeout(() => {
           startListening();
@@ -342,7 +424,6 @@ Be like a concise assistant giving quick facts. Stop talking after answering.`;
       return;
     }
 
-    // Clear any pending auto-restart
     if (autoRestartTimeoutRef.current) {
       clearTimeout(autoRestartTimeoutRef.current);
     }
@@ -355,16 +436,13 @@ Be like a concise assistant giving quick facts. Stop talking after answering.`;
     try {
       recognitionRef.current.start();
     } catch (e) {
-      // Already started, ignore
       console.log('Recognition already active');
     }
   };
 
   const stopAll = () => {
-    // Disable auto-restart
     shouldAutoRestartRef.current = false;
     
-    // Clear any pending auto-restart timeout
     if (autoRestartTimeoutRef.current) {
       clearTimeout(autoRestartTimeoutRef.current);
     }
@@ -445,7 +523,6 @@ Be like a concise assistant giving quick facts. Stop talking after answering.`;
       justifyContent: 'center',
       zIndex: 1000
     }}>
-      {/* CSS Animations */}
       <style>{`
         @keyframes pulse {
           0%, 100% { transform: scale(1); }
@@ -455,7 +532,35 @@ Be like a concise assistant giving quick facts. Stop talking after answering.`;
           from { transform: rotate(0deg); }
           to { transform: rotate(360deg); }
         }
+        @keyframes slideIn {
+          from { transform: translateY(-20px); opacity: 0; }
+          to { transform: translateY(0); opacity: 1; }
+        }
       `}</style>
+
+      {/* Issue Created Notification */}
+      {issueCreated && (
+        <div style={{
+          position: 'absolute',
+          top: '24px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          background: 'rgba(16, 185, 129, 0.95)',
+          borderRadius: '12px',
+          padding: '12px 20px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+          boxShadow: '0 4px 20px rgba(16, 185, 129, 0.3)',
+          zIndex: 1001,
+          animation: 'slideIn 0.3s ease'
+        }}>
+          <CheckCircle size={20} style={{ color: 'white' }} />
+          <span style={{ color: 'white', fontWeight: '500' }}>
+            Issue created: {issueCreated.title}
+          </span>
+        </div>
+      )}
 
       <div style={{
         background: 'rgba(30, 41, 59, 0.95)',
@@ -587,7 +692,6 @@ Be like a concise assistant giving quick facts. Stop talking after answering.`;
             </button>
           )}
 
-          {/* Mute Toggle */}
           <button
             onClick={() => setIsMuted(!isMuted)}
             style={{
@@ -618,9 +722,14 @@ Be like a concise assistant giving quick facts. Stop talking after answering.`;
           </p>
         )}
 
+        {/* Tips */}
+        <p style={{ color: '#64748B', fontSize: '12px', textAlign: 'center', marginTop: '16px' }}>
+          💡 Say "create an issue about..." to log issues
+        </p>
+
         {/* Conversation indicator */}
         {conversationHistory.length > 0 && (
-          <p style={{ color: '#64748B', fontSize: '12px', textAlign: 'center', marginTop: '16px' }}>
+          <p style={{ color: '#64748B', fontSize: '12px', textAlign: 'center', marginTop: '8px' }}>
             {Math.floor(conversationHistory.length / 2)} exchanges in this session
           </p>
         )}
