@@ -178,6 +178,7 @@ export default function App() {
             addToIntelligence={addToIntelligence}
             knowledge={knowledge}
             connectedDocs={connectedDocs}
+            issues={issues}
           />
         );
       case 'knowledge':
@@ -457,6 +458,7 @@ export default function App() {
           addToIntelligence={addToIntelligence}
           knowledge={knowledge}
           connectedDocs={connectedDocs}
+          issues={issues}
         />
       )}
     </div>
