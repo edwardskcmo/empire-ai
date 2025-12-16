@@ -1,5 +1,5 @@
 // Empire AI - Systems Page
-// Version 3.0 - With Knowledge Gaps, Analytics Dashboard
+// Version 3.1 - Fixed AI Instructions container overflow
 
 import React, { useState, useEffect } from 'react';
 import { 
@@ -239,6 +239,8 @@ export default function Systems({
             fontSize: 14,
             fontStyle: systemInstructions ? 'normal' : 'italic',
             whiteSpace: 'pre-wrap',
+            maxHeight: 150,
+            overflowY: 'auto',
           }}>
             {systemInstructions || 'No system-wide instructions configured. Click Edit to add custom AI behavior.'}
           </div>
