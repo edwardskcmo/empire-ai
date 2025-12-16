@@ -1,351 +1,261 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { MessageSquare, Send, Sparkles, FileText, CheckCircle } from 'lucide-react';
+import { Send, Sparkles, Brain, FileText, CheckCircle } from 'lucide-react';
+import { formatDate, formatTimestamp, generateId, getSourceLabel } from '../utils';
 
-export default function Chat({
+function Chat({
   activeDepartment,
-  conversations,
-  setConversations,
-  systemInstructions,
-  intelligenceIndex,
-  queryIntelligence,
-  logActivity,
-  addToIntelligence,
+  departments,
   knowledge,
   connectedDocs,
   issues,
   setIssues,
-  departments
+  intelligenceIndex,
+  queryIntelligence, // Now returns a Promise (async)
+  systemInstructions,
+  logActivity,
+  addToIntelligence,
+  conversations,
+  setConversations,
+  generateEmbedding, // NEW: For semantic search
 }) {
   const [message, setMessage] = useState('');
   const [isThinking, setIsThinking] = useState(false);
-  const [issueCreated, setIssueCreated] = useState(null);
+  const [issueCreatedNotification, setIssueCreatedNotification] = useState(null);
   const messagesEndRef = useRef(null);
-
+  
   const deptId = activeDepartment?.id || 'general';
   const deptMessages = conversations[deptId] || [];
-
-  // Check for pending message from Dashboard quick chat
-  useEffect(() => {
-    const pendingMessage = sessionStorage.getItem('pendingChatMessage');
-    if (pendingMessage) {
-      sessionStorage.removeItem('pendingChatMessage');
-      setMessage(pendingMessage);
-      // Auto-send after a brief delay
-      setTimeout(() => {
-        sendMessage(pendingMessage);
-      }, 100);
-    }
-  }, [activeDepartment]);
 
   // Auto-scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [deptMessages, isThinking]);
 
-  // Clear issue created notification after 5 seconds
-  useEffect(() => {
-    if (issueCreated) {
-      const timer = setTimeout(() => setIssueCreated(null), 5000);
-      return () => clearTimeout(timer);
-    }
-  }, [issueCreated]);
-
-  const buildKnowledgeContext = (query) => {
+  // Build knowledge context for AI (now async for semantic search)
+  const buildKnowledgeContext = async (query) => {
     let context = '';
     
-    // Get relevant items from intelligence
-    if (queryIntelligence && intelligenceIndex) {
-      const relevant = queryIntelligence(intelligenceIndex, query, deptId);
-      if (relevant && relevant.length > 0) {
-        context += '\n\nRelevant company knowledge:\n';
-        relevant.slice(0, 5).forEach((item, i) => {
-          const label = item.sourceType === 'knowledge' ? 'Knowledge' : 
-                       item.sourceType === 'resolved_issue' ? 'Resolved Issue' :
-                       item.sourceType === 'google_doc' ? 'Connected Doc' : 'Info';
-          context += `${i + 1}. [${label}] ${item.title}: ${item.content?.substring(0, 300)}...\n`;
-        });
-      }
+    // 1. Query intelligence with semantic search
+    const relevantItems = await queryIntelligence(query, activeDepartment?.id);
+    if (relevantItems && relevantItems.length > 0) {
+      context += '=== RELEVANT COMPANY KNOWLEDGE ===\n';
+      relevantItems.slice(0, 5).forEach((item, i) => {
+        const label = getSourceLabel(item.sourceType);
+        context += `${i + 1}. [${label}] ${item.title}: ${item.content?.substring(0, 500)}...\n`;
+      });
+      context += '\n';
     }
-
-    // Include connected docs/sheets content
-    if (connectedDocs && connectedDocs.length > 0) {
-      const syncedDocs = connectedDocs.filter(d => d.status === 'synced' && d.content);
-      if (syncedDocs.length > 0) {
-        context += '\n\nConnected Google Docs/Sheets data:\n';
-        syncedDocs.forEach((doc) => {
-          context += `\n--- ${doc.name} (${doc.department || 'General'}) ---\n`;
-          context += doc.content?.substring(0, 50000) + (doc.content?.length > 50000 ? '...' : '') + '\n';
-        });
-      }
+    
+    // 2. Include connected Google Docs/Sheets (full content)
+    const syncedDocs = connectedDocs?.filter(d => d.status === 'synced' && d.content) || [];
+    if (syncedDocs.length > 0) {
+      context += '=== CONNECTED GOOGLE DOCS/SHEETS ===\n';
+      syncedDocs.forEach(doc => {
+        context += `--- ${doc.name} (${doc.department}) ---\n`;
+        context += doc.content?.substring(0, 50000) + '\n\n';
+      });
     }
-
-    // Include issues board data
-    if (issues && issues.length > 0) {
-      const activeIssues = issues.filter(i => !i.archived);
-      const resolvedIssues = issues.filter(i => i.archived || i.status === 'Resolved');
-      
-      if (activeIssues.length > 0) {
-        context += '\n\n=== ISSUES BOARD (Active Issues) ===\n';
-        activeIssues.forEach((issue, i) => {
-          context += `${i + 1}. [${issue.status}] [${issue.priority}] ${issue.title}`;
-          if (issue.department) context += ` (Dept: ${issue.department})`;
-          if (issue.assignee) context += ` - Assigned to: ${issue.assignee}`;
-          if (issue.description) context += `\n   Description: ${issue.description}`;
-          context += `\n   Created: ${new Date(issue.createdAt).toLocaleDateString()}\n`;
-        });
-      }
-      
-      if (resolvedIssues.length > 0) {
-        context += '\n=== RESOLVED/ARCHIVED ISSUES ===\n';
-        resolvedIssues.slice(0, 10).forEach((issue, i) => {
-          context += `${i + 1}. ${issue.title} - ${issue.status}`;
-          if (issue.resolutionNotes) context += `\n   Resolution: ${issue.resolutionNotes}`;
-          context += '\n';
-        });
-      }
+    
+    // 3. Include active issues
+    const activeIssues = issues?.filter(i => !i.archived) || [];
+    if (activeIssues.length > 0) {
+      context += '=== ISSUES BOARD (Active Issues) ===\n';
+      activeIssues.forEach((issue, i) => {
+        context += `${i + 1}. [${issue.status}] [${issue.priority}] ${issue.title} (Dept: ${issue.department}) - Assigned to: ${issue.assignee || 'Unassigned'}\n`;
+        if (issue.description) context += `   Description: ${issue.description}\n`;
+        context += `   Created: ${formatDate(issue.createdAt)}\n`;
+      });
+      context += '\n';
     }
-
-    // Include relevant knowledge items
-    if (knowledge && knowledge.length > 0) {
-      const deptKnowledge = activeDepartment 
-        ? knowledge.filter(k => k.department === deptId || k.department === 'company-wide')
-        : knowledge;
-      
-      if (deptKnowledge.length > 0 && !context.includes('Knowledge base items')) {
-        context += '\n\nKnowledge base items:\n';
-        deptKnowledge.slice(0, 3).forEach((item, i) => {
-          context += `${i + 1}. ${item.title}: ${item.content?.substring(0, 200)}...\n`;
-        });
-      }
+    
+    // 4. Include resolved issues
+    const resolvedIssues = issues?.filter(i => i.archived || i.status === 'Resolved') || [];
+    if (resolvedIssues.length > 0) {
+      context += '=== RESOLVED/ARCHIVED ISSUES ===\n';
+      resolvedIssues.slice(0, 10).forEach((issue, i) => {
+        context += `${i + 1}. ${issue.title} - ${issue.status}\n`;
+        if (issue.resolutionNotes) context += `   Resolution: ${issue.resolutionNotes}\n`;
+      });
+      context += '\n';
     }
-
+    
     return context;
   };
 
-  // Parse AI response for issue creation command
+  // Parse issue creation from AI response
   const parseIssueFromResponse = (response) => {
-    // Look for the issue creation marker
-    const issueMatch = response.match(/\[ISSUE_CREATED\]\s*([^|]+)\s*\|\s*(High|Medium|Low)\s*\|\s*([^|]+)\s*\|\s*(.+?)(?:\[\/ISSUE_CREATED\]|$)/i);
+    const match = response.match(/\[ISSUE_CREATED\](.*?)\[\/ISSUE_CREATED\]/s);
+    if (!match) return null;
     
-    if (issueMatch) {
-      return {
-        title: issueMatch[1].trim(),
-        priority: issueMatch[2].trim(),
-        department: issueMatch[3].trim(),
-        description: issueMatch[4].trim().replace(/\[\/ISSUE_CREATED\]/i, '').trim()
-      };
-    }
-    return null;
+    const parts = match[1].trim().split('|').map(p => p.trim());
+    if (parts.length < 1) return null;
+    
+    return {
+      title: parts[0] || 'New Issue',
+      priority: parts[1] || 'Medium',
+      department: parts[2] || activeDepartment?.name || 'General',
+      description: parts[3] || '',
+    };
   };
 
-  // Create issue in the system
-  const createIssue = (issueData) => {
-    // Find matching department ID
-    let deptIdForIssue = deptId;
-    if (departments && issueData.department) {
-      const matchedDept = departments.find(d => 
-        d.name.toLowerCase().includes(issueData.department.toLowerCase()) ||
-        issueData.department.toLowerCase().includes(d.name.toLowerCase())
-      );
-      if (matchedDept) {
-        deptIdForIssue = matchedDept.id;
-      }
-    }
-
+  // Create issue from parsed data
+  const createIssue = async (issueData) => {
     const newIssue = {
-      id: `issue_${Date.now()}`,
+      id: generateId('issue'),
       title: issueData.title,
       description: issueData.description,
-      department: deptIdForIssue,
+      department: issueData.department,
       priority: issueData.priority,
       status: 'Open',
       assignee: '',
       createdAt: new Date().toISOString(),
-      archived: false
+      archived: false,
     };
-
+    
     setIssues(prev => [newIssue, ...prev]);
     
-    // Log to activity
-    if (logActivity) {
-      logActivity(`Issue created via chat: ${issueData.title}`, 'issue');
-    }
-
-    // Add to intelligence
-    if (addToIntelligence) {
-      addToIntelligence({
-        sourceType: 'issue_created',
-        sourceId: newIssue.id,
-        title: `Issue: ${issueData.title}`,
-        content: `New issue created: ${issueData.title}. Priority: ${issueData.priority}. ${issueData.description}`,
-        department: deptIdForIssue,
-        tags: ['issue', 'open', issueData.priority.toLowerCase()],
-        metadata: { priority: issueData.priority },
-        relevanceBoost: issueData.priority === 'High' ? 3 : issueData.priority === 'Medium' ? 2 : 1
-      });
-    }
-
+    // Log to intelligence
+    await addToIntelligence(
+      'issue_created',
+      newIssue.id,
+      newIssue.title,
+      `${newIssue.description} | Priority: ${newIssue.priority} | Department: ${newIssue.department}`,
+      newIssue.department,
+      null,
+      { priority: newIssue.priority },
+      newIssue.priority === 'High' ? 3 : newIssue.priority === 'Medium' ? 2 : 1
+    );
+    
+    logActivity(`Created issue: ${newIssue.title}`, 'issue', newIssue.department);
+    
+    // Show notification
+    setIssueCreatedNotification(newIssue.title);
+    setTimeout(() => setIssueCreatedNotification(null), 4000);
+    
     return newIssue;
   };
 
-  // Clean the AI response for display (remove the issue creation markup)
+  // Clean response for display (remove markers)
   const cleanResponseForDisplay = (response) => {
-    return response
-      .replace(/\[ISSUE_CREATED\].*?\[\/ISSUE_CREATED\]/gis, '')
-      .replace(/\[ISSUE_CREATED\].*$/gis, '')
-      .trim();
+    return response.replace(/\[ISSUE_CREATED\].*?\[\/ISSUE_CREATED\]/gs, '').trim();
   };
 
-  const sendMessage = async (overrideMessage) => {
-    const textToSend = overrideMessage || message;
-    if (!textToSend.trim() || isThinking) return;
-
-    const userMessage = {
-      id: `msg_${Date.now()}`,
-      role: 'user',
-      content: textToSend.trim(),
-      timestamp: new Date().toISOString()
-    };
-
+  // Send message
+  const sendMessage = async () => {
+    if (!message.trim() || isThinking) return;
+    
+    const userMessage = message.trim();
+    setMessage('');
+    
     // Add user message to conversation
+    const newUserMsg = {
+      id: generateId('msg'),
+      role: 'user',
+      content: userMessage,
+      timestamp: new Date().toISOString(),
+    };
+    
     setConversations(prev => ({
       ...prev,
-      [deptId]: [...(prev[deptId] || []), userMessage]
+      [deptId]: [...(prev[deptId] || []), newUserMsg],
     }));
-
-    setMessage('');
+    
     setIsThinking(true);
-
-    // Build context
-    const knowledgeContext = buildKnowledgeContext(textToSend);
-
-    // Build department list for AI
-    const deptList = departments ? departments.map(d => d.name).join(', ') : 'General';
-
-    // Build system prompt with issue creation capability
-    let systemPrompt = `You are Empire AI, the operational intelligence assistant for Empire Remodeling. You help with questions, tasks, and decisions across all departments. Be helpful, concise, and reference company data when relevant.
-
-=== ISSUE CREATION CAPABILITY ===
-You can create issues on the Issues Board. When a user asks you to create, log, add, or report an issue:
-1. Acknowledge their request
-2. Include this EXACT format at the END of your response:
-[ISSUE_CREATED] Issue Title | Priority | Department | Description [/ISSUE_CREATED]
-
-Priority must be: High, Medium, or Low
-Department must be one of: ${deptList}
-
-Example - if user says "create an issue about the permit delay on the Johnson project":
-"I'll create that issue for you now.
-[ISSUE_CREATED] Permit delay - Johnson project | High | Production & Project Management | Permit approval is delayed for the Johnson project, causing scheduling issues [/ISSUE_CREATED]"
-
-If the user doesn't specify priority, use Medium.
-If the user doesn't specify department, use the current department or best match.
-Always include the [ISSUE_CREATED] marker when creating an issue - this triggers the actual creation.
-=== END ISSUE CREATION ===`;
-
-    if (activeDepartment) {
-      systemPrompt += `\n\nCurrent Department: ${activeDepartment.name}`;
-      if (activeDepartment.description) {
-        systemPrompt += `\nDepartment Focus: ${activeDepartment.description}`;
-      }
-      if (activeDepartment.instructions) {
-        systemPrompt += `\n\n=== ${activeDepartment.name} DEPARTMENT INSTRUCTIONS ===\n${activeDepartment.instructions}`;
-      }
-    }
-
-    if (systemInstructions) {
-      systemPrompt += `\n\n=== SYSTEM-WIDE INSTRUCTIONS ===\n${systemInstructions}`;
-    }
-
-    if (knowledgeContext) {
-      systemPrompt += knowledgeContext;
-    }
-
-    // Get conversation history for context
-    const historyForAPI = deptMessages.slice(-10).map(msg => ({
-      role: msg.role,
-      content: msg.content
-    }));
-
+    
     try {
-      const res = await fetch('/api/chat', {
+      // Build context with semantic search
+      const knowledgeContext = await buildKnowledgeContext(userMessage);
+      
+      // Build system prompt
+      let systemPrompt = `You are Empire AI, the operational intelligence assistant for Empire Remodeling.
+      
+Current Department: ${activeDepartment?.name || 'General'}
+Department Focus: ${activeDepartment?.description || 'Cross-functional support'}
+
+${knowledgeContext}
+
+${systemInstructions ? `\n=== SYSTEM-WIDE INSTRUCTIONS ===\n${systemInstructions}` : ''}
+${activeDepartment?.instructions ? `\n=== ${activeDepartment.name} DEPARTMENT INSTRUCTIONS ===\n${activeDepartment.instructions}` : ''}
+
+ISSUE CREATION:
+If the user asks you to create, log, add, or report an issue, include this marker in your response:
+[ISSUE_CREATED] Title | Priority | Department | Description [/ISSUE_CREATED]
+Example: [ISSUE_CREATED] Permit delay - Johnson | High | Production | Waiting on city approval [/ISSUE_CREATED]
+
+Be helpful, specific, and reference the company knowledge when relevant.`;
+
+      // Get recent conversation history
+      const recentHistory = deptMessages.slice(-10).map(m => ({
+        role: m.role,
+        content: m.content,
+      }));
+      
+      // Call API
+      const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message: textToSend.trim(),
+          message: userMessage,
           systemPrompt,
-          conversationHistory: historyForAPI
-        })
+          conversationHistory: recentHistory,
+        }),
       });
-
-      if (!res.ok) {
-        throw new Error(`API error: ${res.status}`);
-      }
-
-      const data = await res.json();
-      let aiResponse = data.response || "I'm sorry, I couldn't process that request.";
-
-      // Check if AI created an issue
-      const issueData = parseIssueFromResponse(aiResponse);
-      if (issueData && setIssues) {
-        const createdIssue = createIssue(issueData);
-        setIssueCreated(createdIssue);
-        // Clean the response for display
-        aiResponse = cleanResponseForDisplay(aiResponse);
-        if (!aiResponse) {
-          aiResponse = `I've created the issue "${issueData.title}" with ${issueData.priority} priority. You can view it on the Issues board.`;
-        }
-      }
-
-      const assistantMessage = {
-        id: `msg_${Date.now()}`,
-        role: 'assistant',
-        content: aiResponse,
-        timestamp: new Date().toISOString()
-      };
-
-      setConversations(prev => ({
-        ...prev,
-        [deptId]: [...(prev[deptId] || []), assistantMessage]
-      }));
-
-      // Log to intelligence
-      if (addToIntelligence && textToSend.length > 10) {
-        addToIntelligence({
-          sourceType: 'chat_query',
-          sourceId: `chat_${Date.now()}`,
-          title: `Chat: ${textToSend.substring(0, 50)}...`,
-          content: `Q: ${textToSend}\nA: ${aiResponse.substring(0, 500)}`,
-          department: deptId,
-          tags: ['chat', 'query'],
-          metadata: { type: 'chat' },
-          relevanceBoost: 1
-        });
-      }
-
-      // Log activity
-      if (logActivity) {
-        logActivity(`Chat in ${activeDepartment?.name || 'General'}`, 'chat');
-      }
-
-    } catch (err) {
-      console.error('Chat API error:', err);
       
-      // Fallback response
-      const fallbackMessage = {
-        id: `msg_${Date.now()}`,
+      let aiResponse;
+      if (response.ok) {
+        const data = await response.json();
+        aiResponse = data.response;
+      } else {
+        aiResponse = "I'm having trouble connecting right now. Please try again.";
+      }
+      
+      // Check for issue creation
+      const issueData = parseIssueFromResponse(aiResponse);
+      if (issueData) {
+        await createIssue(issueData);
+      }
+      
+      // Clean and add AI response
+      const cleanedResponse = cleanResponseForDisplay(aiResponse);
+      const newAiMsg = {
+        id: generateId('msg'),
         role: 'assistant',
-        content: "I'm having trouble connecting right now. Please check your connection and try again.",
-        timestamp: new Date().toISOString()
+        content: cleanedResponse,
+        timestamp: new Date().toISOString(),
       };
-
+      
       setConversations(prev => ({
         ...prev,
-        [deptId]: [...(prev[deptId] || []), fallbackMessage]
+        [deptId]: [...(prev[deptId] || []), newAiMsg],
       }));
+      
+      // Log to intelligence (with embedding)
+      await addToIntelligence(
+        'chat_query',
+        newAiMsg.id,
+        `Q: ${userMessage.substring(0, 100)}`,
+        `User asked: ${userMessage}\n\nAI responded: ${cleanedResponse.substring(0, 500)}`,
+        activeDepartment?.id || 'general',
+        null,
+        { query: userMessage },
+        1
+      );
+      
+    } catch (error) {
+      console.error('Chat error:', error);
+      const errorMsg = {
+        id: generateId('msg'),
+        role: 'assistant',
+        content: "I encountered an error. Please try again.",
+        timestamp: new Date().toISOString(),
+      };
+      setConversations(prev => ({
+        ...prev,
+        [deptId]: [...(prev[deptId] || []), errorMsg],
+      }));
+    } finally {
+      setIsThinking(false);
     }
-
-    setIsThinking(false);
   };
 
   const handleKeyPress = (e) => {
@@ -355,269 +265,243 @@ Always include the [ISSUE_CREATED] marker when creating an issue - this triggers
     }
   };
 
-  const formatTime = (timestamp) => {
-    return new Date(timestamp).toLocaleTimeString('en-US', {
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true
-    });
-  };
-
-  const hasCustomInstructions = systemInstructions?.trim() || activeDepartment?.instructions?.trim();
+  const hasCustomInstructions = systemInstructions || activeDepartment?.instructions;
 
   return (
-    <div style={{ 
-      height: '100vh', 
-      display: 'flex', 
+    <div style={{
+      height: '100vh',
+      display: 'flex',
       flexDirection: 'column',
-      padding: '24px'
+      backgroundColor: 'transparent',
     }}>
       {/* Issue Created Notification */}
-      {issueCreated && (
+      {issueCreatedNotification && (
         <div style={{
           position: 'fixed',
-          top: '24px',
-          right: '24px',
-          background: 'rgba(16, 185, 129, 0.95)',
-          borderRadius: '12px',
-          padding: '16px 20px',
+          top: 20,
+          right: 20,
+          backgroundColor: 'rgba(16, 185, 129, 0.95)',
+          color: 'white',
+          padding: '12px 20px',
+          borderRadius: 8,
           display: 'flex',
           alignItems: 'center',
-          gap: '12px',
-          boxShadow: '0 4px 20px rgba(16, 185, 129, 0.3)',
-          zIndex: 100,
-          animation: 'slideIn 0.3s ease'
+          gap: 10,
+          zIndex: 1000,
+          boxShadow: '0 4px 20px rgba(0,0,0,0.3)',
         }}>
-          <CheckCircle size={24} style={{ color: 'white' }} />
-          <div>
-            <p style={{ color: 'white', fontWeight: '600', margin: 0 }}>Issue Created</p>
-            <p style={{ color: 'rgba(255,255,255,0.8)', fontSize: '13px', margin: '4px 0 0 0' }}>
-              {issueCreated.title}
-            </p>
-          </div>
+          <CheckCircle size={18} />
+          Issue created: {issueCreatedNotification}
         </div>
       )}
 
       {/* Header */}
       <div style={{
-        background: 'rgba(30, 41, 59, 0.8)',
-        borderRadius: '12px',
-        padding: '16px 20px',
-        marginBottom: '16px',
-        border: '1px solid rgba(255,255,255,0.06)',
+        padding: '16px 24px',
+        borderBottom: '1px solid rgba(255,255,255,0.06)',
         display: 'flex',
         alignItems: 'center',
-        gap: '16px'
+        gap: 12,
       }}>
-        <div style={{
-          width: '48px',
-          height: '48px',
-          background: activeDepartment?.color || '#3B82F6',
-          borderRadius: '12px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          fontSize: '24px'
-        }}>
-          {activeDepartment?.icon || '💬'}
-        </div>
+        {activeDepartment && (
+          <div style={{
+            width: 40,
+            height: 40,
+            borderRadius: 10,
+            backgroundColor: activeDepartment.color + '20',
+            color: activeDepartment.color,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}>
+            <Sparkles size={20} />
+          </div>
+        )}
         <div style={{ flex: 1 }}>
-          <h2 style={{ color: '#E2E8F0', fontSize: '18px', fontWeight: '600', margin: 0 }}>
+          <h2 style={{ color: '#E2E8F0', fontSize: 18, fontWeight: 600, margin: 0 }}>
             {activeDepartment?.name || 'General Chat'}
           </h2>
-          <p style={{ color: '#94A3B8', fontSize: '13px', margin: '2px 0 0 0' }}>
+          <p style={{ color: '#64748B', fontSize: 13, margin: 0 }}>
             {activeDepartment?.description || 'Chat with Empire AI'}
           </p>
         </div>
-        
-        {/* Custom Instructions Badge */}
         {hasCustomInstructions && (
           <div style={{
+            backgroundColor: 'rgba(249, 115, 22, 0.15)',
+            color: '#F97316',
+            padding: '4px 10px',
+            borderRadius: 12,
+            fontSize: 11,
+            fontWeight: 600,
             display: 'flex',
             alignItems: 'center',
-            gap: '6px',
-            background: 'rgba(249, 115, 22, 0.15)',
-            border: '1px solid rgba(249, 115, 22, 0.3)',
-            borderRadius: '20px',
-            padding: '6px 12px'
+            gap: 4,
           }}>
-            <FileText size={14} style={{ color: '#F97316' }} />
-            <span style={{ color: '#FB923C', fontSize: '12px', fontWeight: '500' }}>
-              Custom Instructions Active
-            </span>
+            <FileText size={12} />
+            Custom Instructions Active
           </div>
         )}
+        <div style={{
+          backgroundColor: 'rgba(139, 92, 246, 0.15)',
+          color: '#A78BFA',
+          padding: '4px 10px',
+          borderRadius: 12,
+          fontSize: 11,
+          fontWeight: 600,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 4,
+        }}>
+          <Brain size={12} />
+          RAG Enhanced
+        </div>
       </div>
 
       {/* Messages */}
       <div style={{
         flex: 1,
-        background: 'rgba(30, 41, 59, 0.6)',
-        borderRadius: '12px',
-        padding: '20px',
         overflowY: 'auto',
-        border: '1px solid rgba(255,255,255,0.06)',
-        marginBottom: '16px'
+        padding: '20px 24px',
       }}>
-        {deptMessages.length === 0 && !isThinking && (
-          <div style={{ textAlign: 'center', padding: '60px 20px' }}>
-            <MessageSquare size={48} style={{ color: '#64748B', marginBottom: '16px' }} />
-            <p style={{ color: '#94A3B8', fontSize: '16px', marginBottom: '8px' }}>
-              Start a conversation
-            </p>
-            <p style={{ color: '#64748B', fontSize: '14px' }}>
-              Ask Empire AI anything about {activeDepartment?.name || 'your business'}
-            </p>
-            <p style={{ color: '#64748B', fontSize: '13px', marginTop: '12px' }}>
-              💡 Tip: Say "create an issue about..." to log issues directly
+        {deptMessages.length === 0 && (
+          <div style={{
+            textAlign: 'center',
+            color: '#64748B',
+            marginTop: 60,
+          }}>
+            <Sparkles size={48} style={{ marginBottom: 16, opacity: 0.3 }} />
+            <p style={{ fontSize: 16 }}>Start a conversation with Empire AI</p>
+            <p style={{ fontSize: 13, marginTop: 8 }}>
+              Ask questions, get insights, or create issues
             </p>
           </div>
         )}
-
-        {deptMessages.map((msg) => (
+        
+        {deptMessages.map(msg => (
           <div
             key={msg.id}
             style={{
               display: 'flex',
               justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start',
-              marginBottom: '16px'
+              marginBottom: 16,
             }}
           >
             <div style={{
               maxWidth: '70%',
-              background: msg.role === 'user' 
-                ? 'linear-gradient(135deg, #3B82F6, #2563EB)' 
-                : 'rgba(15, 23, 42, 0.8)',
-              borderRadius: msg.role === 'user' 
-                ? '16px 16px 4px 16px' 
-                : '16px 16px 16px 4px',
               padding: '12px 16px',
-              border: msg.role === 'user' ? 'none' : '1px solid rgba(255,255,255,0.06)'
+              borderRadius: 12,
+              backgroundColor: msg.role === 'user' 
+                ? 'rgba(59, 130, 246, 0.2)' 
+                : 'rgba(30, 41, 59, 0.8)',
+              color: '#E2E8F0',
             }}>
-              <p style={{ 
-                color: '#E2E8F0', 
-                fontSize: '14px', 
-                margin: 0,
-                lineHeight: '1.5',
-                whiteSpace: 'pre-wrap'
-              }}>
+              <p style={{ margin: 0, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
                 {msg.content}
               </p>
-              <p style={{ 
-                color: msg.role === 'user' ? 'rgba(255,255,255,0.6)' : '#64748B', 
-                fontSize: '11px', 
-                margin: '8px 0 0 0',
-                textAlign: 'right'
+              <span style={{
+                fontSize: 10,
+                color: '#64748B',
+                marginTop: 6,
+                display: 'block',
               }}>
-                {formatTime(msg.timestamp)}
-              </p>
+                {formatTimestamp(msg.timestamp)}
+              </span>
             </div>
           </div>
         ))}
-
-        {/* Thinking indicator */}
+        
         {isThinking && (
-          <div style={{ display: 'flex', marginBottom: '16px' }}>
+          <div style={{
+            display: 'flex',
+            justifyContent: 'flex-start',
+            marginBottom: 16,
+          }}>
             <div style={{
-              background: 'rgba(15, 23, 42, 0.8)',
-              borderRadius: '16px 16px 16px 4px',
-              padding: '16px',
-              border: '1px solid rgba(255,255,255,0.06)'
+              padding: '12px 16px',
+              borderRadius: 12,
+              backgroundColor: 'rgba(30, 41, 59, 0.8)',
+              color: '#94A3B8',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
             }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Sparkles size={16} style={{ color: '#8B5CF6' }} />
-                <span style={{ color: '#94A3B8', fontSize: '14px' }}>Empire AI is thinking</span>
-                <div style={{ display: 'flex', gap: '4px' }}>
-                  <span style={{ 
-                    width: '6px', 
-                    height: '6px', 
-                    background: '#8B5CF6', 
-                    borderRadius: '50%',
-                    animation: 'thinking 1.4s infinite ease-in-out both',
-                    animationDelay: '0s'
-                  }} />
-                  <span style={{ 
-                    width: '6px', 
-                    height: '6px', 
-                    background: '#8B5CF6', 
-                    borderRadius: '50%',
-                    animation: 'thinking 1.4s infinite ease-in-out both',
-                    animationDelay: '0.2s'
-                  }} />
-                  <span style={{ 
-                    width: '6px', 
-                    height: '6px', 
-                    background: '#8B5CF6', 
-                    borderRadius: '50%',
-                    animation: 'thinking 1.4s infinite ease-in-out both',
-                    animationDelay: '0.4s'
-                  }} />
-                </div>
-              </div>
+              <span>Empire AI is thinking</span>
+              <span className="thinking-dots" style={{ display: 'flex', gap: 4 }}>
+                <span style={{
+                  width: 6, height: 6, borderRadius: '50%',
+                  backgroundColor: '#3B82F6',
+                }}>.</span>
+                <span style={{
+                  width: 6, height: 6, borderRadius: '50%',
+                  backgroundColor: '#3B82F6',
+                }}>.</span>
+                <span style={{
+                  width: 6, height: 6, borderRadius: '50%',
+                  backgroundColor: '#3B82F6',
+                }}>.</span>
+              </span>
             </div>
           </div>
         )}
-
+        
         <div ref={messagesEndRef} />
       </div>
 
       {/* Input */}
       <div style={{
-        display: 'flex',
-        gap: '12px',
-        background: 'rgba(30, 41, 59, 0.8)',
-        borderRadius: '12px',
-        padding: '12px',
-        border: '1px solid rgba(255,255,255,0.06)'
+        padding: '16px 24px',
+        borderTop: '1px solid rgba(255,255,255,0.06)',
       }}>
-        <input
-          type="text"
-          value={message}
-          onChange={(e) => setMessage(e.target.value)}
-          onKeyPress={handleKeyPress}
-          disabled={isThinking}
-          placeholder={isThinking ? 'Waiting for response...' : `Message ${activeDepartment?.name || 'Empire AI'}...`}
-          style={{
-            flex: 1,
-            background: 'rgba(15, 23, 42, 0.8)',
-            border: '1px solid rgba(255,255,255,0.1)',
-            borderRadius: '8px',
-            padding: '14px 16px',
-            color: '#E2E8F0',
-            fontSize: '14px',
-            outline: 'none'
-          }}
-        />
-        <button
-          onClick={() => sendMessage()}
-          disabled={!message.trim() || isThinking}
-          style={{
-            background: message.trim() && !isThinking ? '#3B82F6' : 'rgba(59, 130, 246, 0.3)',
-            border: 'none',
-            borderRadius: '8px',
-            padding: '14px 20px',
-            color: 'white',
-            cursor: message.trim() && !isThinking ? 'pointer' : 'not-allowed',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px'
-          }}
-        >
-          <Send size={18} />
-        </button>
+        <div style={{
+          display: 'flex',
+          gap: 12,
+          alignItems: 'flex-end',
+        }}>
+          <textarea
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            onKeyPress={handleKeyPress}
+            placeholder={`Message ${activeDepartment?.name || 'Empire AI'}...`}
+            disabled={isThinking}
+            style={{
+              flex: 1,
+              padding: '12px 16px',
+              borderRadius: 12,
+              border: '1px solid rgba(255,255,255,0.1)',
+              backgroundColor: 'rgba(30, 41, 59, 0.6)',
+              color: '#E2E8F0',
+              fontSize: 14,
+              resize: 'none',
+              minHeight: 48,
+              maxHeight: 120,
+              outline: 'none',
+              fontFamily: 'inherit',
+            }}
+            rows={1}
+          />
+          <button
+            onClick={sendMessage}
+            disabled={!message.trim() || isThinking}
+            style={{
+              width: 48,
+              height: 48,
+              borderRadius: 12,
+              border: 'none',
+              backgroundColor: message.trim() && !isThinking ? '#3B82F6' : 'rgba(59, 130, 246, 0.3)',
+              color: 'white',
+              cursor: message.trim() && !isThinking ? 'pointer' : 'not-allowed',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              transition: 'all 0.2s',
+            }}
+          >
+            <Send size={20} />
+          </button>
+        </div>
       </div>
-
-      {/* CSS for animations */}
-      <style>{`
-        @keyframes thinking {
-          0%, 80%, 100% { transform: scale(0); opacity: 0.5; }
-          40% { transform: scale(1); opacity: 1; }
-        }
-        @keyframes slideIn {
-          from { transform: translateX(100px); opacity: 0; }
-          to { transform: translateX(0); opacity: 1; }
-        }
-      `}</style>
     </div>
   );
 }
+
+export default Chat;
