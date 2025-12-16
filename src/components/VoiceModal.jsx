@@ -1,15 +1,21 @@
-// Empire AI - Voice Mode Modal
-// Speech recognition + ElevenLabs TTS + AI processing
+// Empire AI - Voice Modal (Carson)
+// Version 3.0 - With Analytics Tracking
 
 import React, { useState, useRef, useEffect } from 'react';
-import { X, Mic, Square, VolumeX, Volume2, Sparkles, AlertCircle, CheckCircle2 } from 'lucide-react';
-import { queryIntelligence, getSourceLabel, semanticSearch } from '../utils';
+import { X, Mic, MicOff, Square, Volume2, VolumeX, Sparkles } from 'lucide-react';
+import { 
+  createIntelligenceItem, 
+  KNOWLEDGE_GAPS_CONFIG,
+  getCachedEmbedding,
+  setCachedEmbedding,
+} from '../utils';
 
 export default function VoiceModal({
   onClose,
   activeDepartment,
   systemInstructions,
   intelligenceIndex,
+  queryIntelligence,
   knowledge,
   connectedDocs,
   issues,
@@ -17,6 +23,10 @@ export default function VoiceModal({
   departments,
   logActivity,
   addToIntelligence,
+  recordKnowledgeGap,
+  trackVoiceSession,
+  trackSearch,
+  trackIssueCreated,
 }) {
   const [status, setStatus] = useState('idle'); // idle, listening, processing, speaking
   const [transcript, setTranscript] = useState('');
@@ -30,261 +40,117 @@ export default function VoiceModal({
   const audioRef = useRef(null);
   const shouldAutoRestartRef = useRef(true);
   const autoRestartTimeoutRef = useRef(null);
-  
-  // Initialize speech recognition
+  const sessionTrackedRef = useRef(false);
+
+  // Track voice session once on mount
   useEffect(() => {
-    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-      recognitionRef.current = new SpeechRecognition();
-      recognitionRef.current.continuous = false;
-      recognitionRef.current.interimResults = true;
-      recognitionRef.current.lang = 'en-US';
-      
-      recognitionRef.current.onresult = (event) => {
-        const transcript = Array.from(event.results)
-          .map(result => result[0].transcript)
-          .join('');
-        setTranscript(transcript);
-        
-        if (event.results[event.results.length - 1].isFinal) {
-          setDebug('Got text: ' + transcript.substring(0, 30) + '...');
-          processTranscript(transcript);
-        }
-      };
-      
-      recognitionRef.current.onerror = (event) => {
-        console.error('Speech recognition error:', event.error);
-        setDebug('Recognition error: ' + event.error);
-        setStatus('idle');
-      };
-      
-      recognitionRef.current.onend = () => {
-        if (status === 'listening') {
-          setStatus('idle');
-        }
-      };
+    if (!sessionTrackedRef.current) {
+      trackVoiceSession();
+      sessionTrackedRef.current = true;
+      logActivity('Started voice session with Carson', 'voice', activeDepartment?.name);
     }
-    
-    synthRef.current = window.speechSynthesis;
-    
-    return () => {
-      if (recognitionRef.current) {
-        recognitionRef.current.abort();
-      }
-      if (synthRef.current) {
-        synthRef.current.cancel();
-      }
-      if (autoRestartTimeoutRef.current) {
-        clearTimeout(autoRestartTimeoutRef.current);
-      }
-    };
   }, []);
-  
-  // Build knowledge context with semantic search (uses cache - Item 4)
+
+  // Build knowledge context
   const buildKnowledgeContext = async (query) => {
     let context = '';
+    let cacheHit = false;
+    let maxScore = 0;
     
-    // Try semantic search first (with caching - Item 4)
-    try {
-      const semanticResults = await semanticSearch(
-        intelligenceIndex, 
-        query, 
-        activeDepartment?.name,
-        {
-          searchAllDepartments: false,
-          maxResults: 10,
-          useEmbeddings: true,
-        }
-      );
-      
-      if (semanticResults.length > 0) {
-        context += '\n=== RELEVANT COMPANY KNOWLEDGE ===\n';
-        semanticResults.forEach((item, i) => {
-          const label = getSourceLabel(item.sourceType);
-          context += `${i + 1}. [${label}] ${item.title}: ${item.content?.substring(0, 300)}...\n`;
-        });
-      }
-    } catch (error) {
-      console.log('Semantic search failed, using keyword search:', error);
-      // Fall back to keyword search
-      const keywordResults = queryIntelligence(intelligenceIndex, query, activeDepartment?.name);
-      if (keywordResults.length > 0) {
-        context += '\n=== RELEVANT COMPANY KNOWLEDGE ===\n';
-        keywordResults.forEach((item, i) => {
-          const label = getSourceLabel(item.sourceType);
-          context += `${i + 1}. [${label}] ${item.title}: ${item.content?.substring(0, 300)}...\n`;
-        });
-      }
+    // Check embedding cache
+    const cachedEmb = getCachedEmbedding(query);
+    cacheHit = !!cachedEmb;
+    trackSearch(cacheHit);
+    
+    // Query intelligence
+    const relevantItems = queryIntelligence(intelligenceIndex, query, activeDepartment?.name, 10);
+    
+    if (relevantItems.length > 0) {
+      maxScore = relevantItems[0].score;
+      context += '\n\n=== RELEVANT KNOWLEDGE ===\n';
+      relevantItems.forEach((item, i) => {
+        context += `${i + 1}. ${item.title}: ${item.content?.substring(0, 200)}...\n`;
+      });
     }
     
-    // Add connected Google Docs/Sheets data
-    if (connectedDocs && connectedDocs.length > 0) {
-      const syncedDocs = connectedDocs.filter(d => d.status === 'synced' && d.content);
-      if (syncedDocs.length > 0) {
-        context += '\n=== CONNECTED SPREADSHEETS & DOCUMENTS ===\n';
-        syncedDocs.forEach(doc => {
-          context += `\n--- ${doc.name} ---\n`;
-          context += doc.content?.substring(0, 50000) + '\n';
-        });
-      }
+    // Add connected docs (full content)
+    const syncedDocs = connectedDocs.filter(d => d.status === 'synced' && d.content);
+    if (syncedDocs.length > 0) {
+      context += '\n\n=== SPREADSHEETS & DOCUMENTS ===\n';
+      syncedDocs.forEach(doc => {
+        context += `\n--- ${doc.name} ---\n`;
+        context += doc.content?.substring(0, 50000) + '\n';
+      });
     }
     
-    // Add issues data
-    if (issues && issues.length > 0) {
-      const activeIssues = issues.filter(i => !i.archived);
-      if (activeIssues.length > 0) {
-        context += '\n=== ACTIVE ISSUES ===\n';
-        activeIssues.slice(0, 15).forEach((issue, i) => {
-          context += `${i + 1}. [${issue.status}] [${issue.priority}] ${issue.title} (${issue.department})\n`;
-        });
-      }
+    // Add issues
+    const activeIssues = issues.filter(i => !i.archived && i.status !== 'Resolved');
+    if (activeIssues.length > 0) {
+      context += '\n\n=== ACTIVE ISSUES ===\n';
+      activeIssues.slice(0, 10).forEach((issue, i) => {
+        context += `${i + 1}. [${issue.priority}] ${issue.title} (${issue.department})\n`;
+      });
     }
     
-    return context;
+    return { context, maxScore };
   };
-  
-  // Parse for issue creation
-  const parseIssueFromResponse = (response) => {
-    const match = response.match(/\[ISSUE_CREATED\](.*?)\[\/ISSUE_CREATED\]/s);
-    if (!match) return null;
-    const parts = match[1].split('|').map(p => p.trim());
-    if (parts.length < 2) return null;
-    return {
-      title: parts[0],
-      priority: parts[1] || 'Medium',
-      department: parts[2] || activeDepartment?.name || 'General',
-      description: parts[3] || '',
-    };
+
+  // Parse issue from response
+  const parseIssueFromResponse = (text) => {
+    const regex = /\[ISSUE_CREATED\]\s*(.+?)\s*\|\s*(.+?)\s*\|\s*(.+?)\s*\|\s*(.+?)\s*\[\/ISSUE_CREATED\]/i;
+    const match = text.match(regex);
+    if (match) {
+      return {
+        title: match[1].trim(),
+        priority: match[2].trim(),
+        department: match[3].trim(),
+        description: match[4].trim(),
+      };
+    }
+    return null;
   };
-  
+
   // Create issue
-  const createIssue = (issueData) => {
-    const matchedDept = departments?.find(d => 
+  const createIssue = async (issueData) => {
+    const matchingDept = departments.find(d => 
       d.name.toLowerCase().includes(issueData.department.toLowerCase())
     );
+    
     const newIssue = {
       id: `issue_${Date.now()}`,
       title: issueData.title,
       description: issueData.description,
-      department: matchedDept?.name || activeDepartment?.name || 'General',
+      department: matchingDept?.name || activeDepartment?.name || 'General',
       priority: ['High', 'Medium', 'Low'].includes(issueData.priority) ? issueData.priority : 'Medium',
       status: 'Open',
       assignee: '',
       createdAt: new Date().toISOString(),
       archived: false,
     };
-    setIssues?.(prev => [...prev, newIssue]);
-    logActivity?.(`Created issue via voice: ${newIssue.title}`, 'voice', newIssue.department);
-    setNotification({ type: 'success', message: `Issue created: ${newIssue.title}` });
-    setTimeout(() => setNotification(null), 3000);
+    
+    setIssues(prev => [newIssue, ...prev]);
+    logActivity(`Created issue via voice: ${newIssue.title}`, 'issue', newIssue.department);
+    trackIssueCreated(newIssue.priority, newIssue.department);
+    
+    setNotification(`Issue created: "${newIssue.title}"`);
+    setTimeout(() => setNotification(null), 4000);
+    
+    return newIssue;
   };
-  
+
+  // Clean response
   const cleanResponse = (text) => {
-    return text.replace(/\[ISSUE_CREATED\].*?\[\/ISSUE_CREATED\]/gs, '').trim();
+    return text.replace(/\[ISSUE_CREATED\][\s\S]*?\[\/ISSUE_CREATED\]/gi, '').trim();
   };
-  
-  // Process transcript and get AI response
-  const processTranscript = async (text) => {
-    if (!text.trim()) return;
-    
-    setStatus('processing');
-    setDebug('Calling API...');
-    
-    try {
-      // Build context with semantic search (uses cache - Item 4)
-      const knowledgeContext = await buildKnowledgeContext(text);
-      
-      let systemPrompt = `You are Carson, the voice assistant for Empire AI at Empire Remodeling.
-Your name is Carson. If asked your name, say "I'm Carson, your Empire AI assistant."
 
-Current Department: ${activeDepartment?.name || 'General'}
-
-${knowledgeContext}
-
-VOICE RESPONSE RULES - FOLLOW STRICTLY:
-1. ONE sentence answer maximum - then STOP talking immediately
-2. After answering, ask: "Anything else?" or "What else do you need?"
-3. NEVER list multiple items unless user says "list them" or "what are all of them"
-4. NEVER mention where the information came from
-5. NEVER explain your reasoning
-6. Wait for user to ask follow-up questions
-
-ISSUE CREATION: If user wants to create/log/report an issue, include:
-[ISSUE_CREATED] Title | Priority | Department | Description [/ISSUE_CREATED]
-
-Examples of CORRECT responses:
-- "54 projects total. Anything else?"
-- "Johnson Kitchen Remodel. Need more details?"
-- "$45,000 budget. What else?"
-- "Issue created for permit delay. Anything else?"
-
-Examples of WRONG responses (TOO LONG):
-- "Based on the spreadsheet data, I can see there are 54 projects..."
-- "The Johnson project is a kitchen remodel with a budget of $45,000 starting on..."`;
-
-      if (systemInstructions?.trim()) {
-        systemPrompt += `\n\nSYSTEM INSTRUCTIONS:\n${systemInstructions}`;
-      }
-      if (activeDepartment?.instructions?.trim()) {
-        systemPrompt += `\n\nDEPARTMENT INSTRUCTIONS:\n${activeDepartment.instructions}`;
-      }
-      
-      const apiResponse = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: text,
-          systemPrompt,
-          conversationHistory: [],
-        }),
-      });
-      
-      setDebug('API Status: ' + apiResponse.status);
-      
-      if (!apiResponse.ok) {
-        throw new Error('API request failed');
-      }
-      
-      const data = await apiResponse.json();
-      let aiResponse = data.response;
-      
-      // Check for issue creation
-      const issueData = parseIssueFromResponse(aiResponse);
-      if (issueData) {
-        createIssue(issueData);
-        aiResponse = cleanResponse(aiResponse);
-      }
-      
-      setResponse(aiResponse);
-      setDebug('Success!');
-      
-      // Log to activity
-      logActivity?.(`Voice chat in ${activeDepartment?.name || 'General'}`, 'voice', activeDepartment?.name);
-      
-      // Speak the response
-      if (!isMuted) {
-        await speakWithElevenLabs(aiResponse);
-      } else {
-        setStatus('idle');
-        // Auto restart after muted response
-        if (shouldAutoRestartRef.current) {
-          autoRestartTimeoutRef.current = setTimeout(() => {
-            startListening();
-          }, 800);
-        }
-      }
-      
-    } catch (error) {
-      console.error('Voice processing error:', error);
-      setDebug('Error: ' + error.message);
-      setResponse("I'm having trouble connecting. Please try again.");
-      setStatus('idle');
-    }
-  };
-  
-  // ElevenLabs TTS
+  // Speak with ElevenLabs
   const speakWithElevenLabs = async (text) => {
-    setStatus('speaking');
+    if (isMuted) {
+      setStatus('idle');
+      shouldAutoRestartRef.current = true;
+      autoRestartTimeoutRef.current = setTimeout(() => startListening(), 800);
+      return;
+    }
     
     try {
       const response = await fetch('/api/text-to-speech', {
@@ -294,95 +160,202 @@ Examples of WRONG responses (TOO LONG):
       });
       
       if (!response.ok) {
-        console.log('ElevenLabs failed:', response.status);
-        fallbackToWebSpeech(text);
-        return;
+        throw new Error('ElevenLabs API error');
       }
       
       const data = await response.json();
       
       // Convert base64 to audio
-      const audioBlob = base64ToBlob(data.audio, 'audio/mpeg');
+      const audioData = atob(data.audio);
+      const audioArray = new Uint8Array(audioData.length);
+      for (let i = 0; i < audioData.length; i++) {
+        audioArray[i] = audioData.charCodeAt(i);
+      }
+      const audioBlob = new Blob([audioArray], { type: 'audio/mpeg' });
       const audioUrl = URL.createObjectURL(audioBlob);
       
+      // Play audio
+      if (audioRef.current) {
+        audioRef.current.pause();
+      }
       audioRef.current = new Audio(audioUrl);
       audioRef.current.onended = () => {
-        URL.revokeObjectURL(audioUrl);
         setStatus('idle');
-        
-        // Auto-continue listening
         if (shouldAutoRestartRef.current) {
-          autoRestartTimeoutRef.current = setTimeout(() => {
-            startListening();
-          }, 800);
+          autoRestartTimeoutRef.current = setTimeout(() => startListening(), 800);
         }
       };
-      audioRef.current.onerror = () => {
-        fallbackToWebSpeech(text);
-      };
       audioRef.current.play();
+      setStatus('speaking');
       
     } catch (error) {
-      console.error('ElevenLabs error:', error);
+      console.log('ElevenLabs failed, using browser speech');
       fallbackToWebSpeech(text);
     }
   };
-  
-  // Helper to convert base64 to blob
-  const base64ToBlob = (base64, mimeType) => {
-    const byteCharacters = atob(base64);
-    const byteNumbers = new Array(byteCharacters.length);
-    for (let i = 0; i < byteCharacters.length; i++) {
-      byteNumbers[i] = byteCharacters.charCodeAt(i);
-    }
-    const byteArray = new Uint8Array(byteNumbers);
-    return new Blob([byteArray], { type: mimeType });
-  };
-  
+
   // Fallback to browser speech
   const fallbackToWebSpeech = (text) => {
     if (!synthRef.current) {
-      setStatus('idle');
-      return;
+      synthRef.current = window.speechSynthesis;
     }
     
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 1.0;
-    utterance.pitch = 1.0;
+    utterance.rate = 1;
+    utterance.pitch = 1;
     
     utterance.onend = () => {
       setStatus('idle');
-      
       if (shouldAutoRestartRef.current) {
-        autoRestartTimeoutRef.current = setTimeout(() => {
-          startListening();
-        }, 800);
+        autoRestartTimeoutRef.current = setTimeout(() => startListening(), 800);
       }
     };
     
     synthRef.current.speak(utterance);
+    setStatus('speaking');
   };
-  
+
   // Start listening
   const startListening = () => {
-    if (!recognitionRef.current) {
+    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
       setDebug('Browser not supported');
       return;
     }
     
-    shouldAutoRestartRef.current = true;
-    setTranscript('');
-    setStatus('listening');
-    setDebug('Listening started');
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    recognitionRef.current = new SpeechRecognition();
+    recognitionRef.current.continuous = false;
+    recognitionRef.current.interimResults = true;
+    recognitionRef.current.lang = 'en-US';
+    
+    recognitionRef.current.onstart = () => {
+      setStatus('listening');
+      setTranscript('');
+      shouldAutoRestartRef.current = true;
+      setDebug('Listening...');
+    };
+    
+    recognitionRef.current.onresult = (event) => {
+      let finalTranscript = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalTranscript += transcript;
+        } else {
+          setTranscript(transcript);
+        }
+      }
+      
+      if (finalTranscript) {
+        setTranscript(finalTranscript);
+        processQuery(finalTranscript);
+      }
+    };
+    
+    recognitionRef.current.onerror = (event) => {
+      setDebug(`Error: ${event.error}`);
+      setStatus('idle');
+    };
+    
+    recognitionRef.current.onend = () => {
+      if (status === 'listening') {
+        setStatus('idle');
+      }
+    };
+    
+    recognitionRef.current.start();
+  };
+
+  // Process query
+  const processQuery = async (query) => {
+    setStatus('processing');
+    setDebug('Processing...');
     
     try {
-      recognitionRef.current.start();
+      const { context, maxScore } = await buildKnowledgeContext(query);
+      
+      // Record knowledge gap if low relevance
+      if (maxScore < KNOWLEDGE_GAPS_CONFIG.LOW_RELEVANCE_THRESHOLD && query.length >= KNOWLEDGE_GAPS_CONFIG.MIN_QUERY_LENGTH) {
+        recordKnowledgeGap(query, maxScore, activeDepartment?.name || 'General');
+      }
+      
+      const deptInstructions = activeDepartment?.instructions || '';
+      
+      const systemPrompt = `You are Carson, the Empire AI voice assistant for Empire Remodeling.
+Your name is Carson. If asked your name, say "I'm Carson, your Empire AI assistant."
+
+Department: ${activeDepartment?.name || 'General'}
+${systemInstructions ? `\nSystem Instructions: ${systemInstructions}` : ''}
+${deptInstructions ? `\nDepartment Instructions: ${deptInstructions}` : ''}
+${context}
+
+VOICE RESPONSE RULES - FOLLOW STRICTLY:
+1. ONE sentence answer maximum - then STOP
+2. After answering, ask: "Anything else?" or "What else do you need?"
+3. NEVER list multiple items unless specifically asked "list them" or "what are they"
+4. NEVER mention data sources or where info came from
+5. NEVER explain reasoning or add context
+6. Wait for user to ask follow-up questions
+
+ISSUE CREATION:
+If asked to create/log/add/report an issue, include:
+[ISSUE_CREATED] Title | Priority | Department | Description [/ISSUE_CREATED]
+
+Example responses:
+- "How many projects?" → "54 projects. Anything else?"
+- "What's project 16?" → "Johnson Kitchen Remodel. Need details?"
+- "Budget for it?" → "$45,000. Anything else?"`;
+
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: query,
+          systemPrompt,
+          conversationHistory: [],
+        }),
+      });
+      
+      if (!response.ok) {
+        throw new Error('API error');
+      }
+      
+      const data = await response.json();
+      let aiResponse = data.response;
+      
+      // Check for issue creation
+      const issueData = parseIssueFromResponse(aiResponse);
+      if (issueData) {
+        await createIssue(issueData);
+        aiResponse = cleanResponse(aiResponse);
+      }
+      
+      setResponse(aiResponse);
+      setDebug('Speaking...');
+      
+      // Log to intelligence
+      addToIntelligence(createIntelligenceItem(
+        'voice_interaction',
+        `voice_${Date.now()}`,
+        `Voice Q: ${query.substring(0, 50)}`,
+        `User asked: ${query}\nCarson: ${aiResponse}`,
+        activeDepartment?.name || 'General',
+        ['voice', 'conversation'],
+        {},
+        1
+      ));
+      
+      speakWithElevenLabs(aiResponse);
+      
     } catch (error) {
-      console.error('Start error:', error);
-      setDebug('Start error: ' + error.message);
+      console.error('Voice processing error:', error);
+      setDebug(`Error: ${error.message}`);
+      const errorMsg = "I'm having trouble right now. Try again?";
+      setResponse(errorMsg);
+      speakWithElevenLabs(errorMsg);
     }
   };
-  
+
   // Stop everything
   const stopAll = () => {
     shouldAutoRestartRef.current = false;
@@ -394,32 +367,45 @@ Examples of WRONG responses (TOO LONG):
     if (recognitionRef.current) {
       recognitionRef.current.abort();
     }
+    
     if (synthRef.current) {
       synthRef.current.cancel();
     }
+    
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current = null;
     }
+    
     setStatus('idle');
   };
-  
+
   // Handle close
   const handleClose = () => {
     stopAll();
     onClose();
   };
-  
-  // Get orb color based on status
-  const getOrbColor = () => {
-    switch (status) {
-      case 'listening': return '#10B981';
-      case 'processing': return '#F59E0B';
-      case 'speaking': return '#8B5CF6';
-      default: return '#3B82F6';
-    }
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      stopAll();
+    };
+  }, []);
+
+  // Status colors
+  const getOrbStyle = () => {
+    const colors = {
+      idle: { bg: '#3B82F6', shadow: 'rgba(59, 130, 246, 0.5)' },
+      listening: { bg: '#10B981', shadow: 'rgba(16, 185, 129, 0.5)' },
+      processing: { bg: '#F59E0B', shadow: 'rgba(245, 158, 11, 0.5)' },
+      speaking: { bg: '#8B5CF6', shadow: 'rgba(139, 92, 246, 0.5)' },
+    };
+    return colors[status] || colors.idle;
   };
-  
+
+  const orbStyle = getOrbStyle();
+
   return (
     <div style={{
       position: 'fixed',
@@ -430,146 +416,104 @@ Examples of WRONG responses (TOO LONG):
       flexDirection: 'column',
       alignItems: 'center',
       justifyContent: 'center',
-      zIndex: 1000,
+      zIndex: 2000,
     }}>
-      {/* Close button */}
+      {/* Close Button */}
       <button
         onClick={handleClose}
         style={{
           position: 'absolute',
-          top: 20,
-          right: 20,
-          background: 'rgba(255,255,255,0.1)',
+          top: 24,
+          right: 24,
+          width: 48,
+          height: 48,
+          background: 'rgba(255, 255, 255, 0.1)',
           border: 'none',
           borderRadius: '50%',
-          width: 44,
-          height: 44,
+          color: 'white',
+          cursor: 'pointer',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          cursor: 'pointer',
-          color: '#94A3B8',
         }}
       >
         <X size={24} />
       </button>
-      
+
       {/* Header */}
-      <div style={{ 
-        position: 'absolute', 
-        top: 24, 
-        left: 24,
-        display: 'flex',
-        alignItems: 'center',
-        gap: 8,
-      }}>
-        <Sparkles size={20} style={{ color: '#A78BFA' }} />
-        <span style={{ color: '#A78BFA', fontSize: 14 }}>Carson powered by ElevenLabs</span>
+      <div style={{ textAlign: 'center', marginBottom: 40 }}>
+        <h2 style={{ fontSize: 28, fontWeight: 700, color: '#E2E8F0', marginBottom: 8 }}>
+          ✨ Carson
+        </h2>
+        <p style={{ color: '#64748B', fontSize: 14 }}>
+          {activeDepartment?.name || 'General'} • ElevenLabs Voice
+        </p>
       </div>
-      
-      {/* Notification */}
-      {notification && (
-        <div style={{
-          position: 'absolute',
-          top: 80,
-          padding: '12px 20px',
-          borderRadius: 8,
-          background: 'rgba(16,185,129,0.9)',
-          color: 'white',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-        }}>
-          <CheckCircle2 size={16} />
-          {notification.message}
-        </div>
-      )}
-      
-      {/* Animated Orb */}
+
+      {/* Orb */}
       <div style={{
-        width: 200,
-        height: 200,
+        width: 180,
+        height: 180,
         borderRadius: '50%',
-        background: `radial-gradient(circle at 30% 30%, ${getOrbColor()}, ${getOrbColor()}88, ${getOrbColor()}44)`,
-        boxShadow: `0 0 60px ${getOrbColor()}66, 0 0 120px ${getOrbColor()}33`,
+        background: `radial-gradient(circle at 30% 30%, ${orbStyle.bg}, ${orbStyle.bg}80)`,
+        boxShadow: `0 0 60px ${orbStyle.shadow}, 0 0 120px ${orbStyle.shadow}`,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        animation: status === 'listening' || status === 'speaking' ? 'pulse 2s ease-in-out infinite' : 
-                   status === 'processing' ? 'spin 2s linear infinite' : 'none',
         marginBottom: 40,
+        animation: status === 'listening' || status === 'speaking' ? 'pulse 2s ease-in-out infinite' : 
+                   status === 'processing' ? 'spin 1s linear infinite' : 'none',
       }}>
-        <div style={{
-          width: 160,
-          height: 160,
-          borderRadius: '50%',
-          background: `radial-gradient(circle at 30% 30%, ${getOrbColor()}cc, ${getOrbColor()}66)`,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}>
-          <div style={{
-            width: 120,
-            height: 120,
-            borderRadius: '50%',
-            background: `radial-gradient(circle at 30% 30%, white, ${getOrbColor()})`,
-            opacity: 0.9,
-          }} />
-        </div>
+        <Sparkles size={48} color="white" style={{ opacity: 0.9 }} />
       </div>
-      
-      {/* Status Text */}
+
+      {/* Status */}
       <div style={{
-        color: '#E2E8F0',
-        fontSize: 18,
-        marginBottom: 8,
-        textTransform: 'capitalize',
-      }}>
-        {status === 'idle' ? 'Ready' : status}
-      </div>
-      
-      {/* Department Badge */}
-      <div style={{
-        color: '#64748B',
-        fontSize: 13,
+        padding: '10px 24px',
+        background: 'rgba(255, 255, 255, 0.1)',
+        borderRadius: 20,
         marginBottom: 24,
       }}>
-        {activeDepartment?.name || 'General'}
+        <span style={{ color: '#E2E8F0', fontSize: 14, textTransform: 'capitalize' }}>
+          {status === 'idle' ? 'Ready' : status}
+        </span>
       </div>
-      
+
       {/* Transcript */}
       {transcript && (
         <div style={{
-          background: 'rgba(255,255,255,0.1)',
+          background: 'rgba(59, 130, 246, 0.1)',
+          border: '1px solid rgba(59, 130, 246, 0.3)',
           borderRadius: 12,
-          padding: '12px 20px',
+          padding: 16,
           marginBottom: 16,
-          maxWidth: '80%',
+          maxWidth: 500,
           textAlign: 'center',
         }}>
           <div style={{ fontSize: 12, color: '#64748B', marginBottom: 4 }}>You said:</div>
-          <div style={{ color: '#E2E8F0' }}>{transcript}</div>
+          <div style={{ color: '#E2E8F0', fontSize: 16 }}>{transcript}</div>
         </div>
       )}
-      
+
       {/* Response */}
       {response && (
         <div style={{
-          background: 'rgba(139, 92, 246, 0.2)',
+          background: 'rgba(139, 92, 246, 0.1)',
+          border: '1px solid rgba(139, 92, 246, 0.3)',
           borderRadius: 12,
-          padding: '12px 20px',
+          padding: 16,
           marginBottom: 24,
-          maxWidth: '80%',
+          maxWidth: 500,
           textAlign: 'center',
         }}>
-          <div style={{ fontSize: 12, color: '#A78BFA', marginBottom: 4 }}>Carson:</div>
-          <div style={{ color: '#E2E8F0' }}>{response}</div>
+          <div style={{ fontSize: 12, color: '#64748B', marginBottom: 4 }}>Carson:</div>
+          <div style={{ color: '#E2E8F0', fontSize: 16 }}>{response}</div>
         </div>
       )}
-      
+
       {/* Controls */}
       <div style={{ display: 'flex', gap: 16 }}>
-        {/* Main button */}
+        {/* Start/Stop Button */}
         {status === 'idle' ? (
           <button
             onClick={startListening}
@@ -577,8 +521,9 @@ Examples of WRONG responses (TOO LONG):
               width: 64,
               height: 64,
               borderRadius: '50%',
-              border: 'none',
               background: 'linear-gradient(135deg, #10B981, #059669)',
+              border: 'none',
+              color: 'white',
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
@@ -586,7 +531,7 @@ Examples of WRONG responses (TOO LONG):
               boxShadow: '0 4px 20px rgba(16, 185, 129, 0.4)',
             }}
           >
-            <Mic size={28} color="white" />
+            <Mic size={28} />
           </button>
         ) : (
           <button
@@ -595,8 +540,9 @@ Examples of WRONG responses (TOO LONG):
               width: 64,
               height: 64,
               borderRadius: '50%',
-              border: 'none',
               background: 'linear-gradient(135deg, #EF4444, #DC2626)',
+              border: 'none',
+              color: 'white',
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
@@ -604,63 +550,58 @@ Examples of WRONG responses (TOO LONG):
               boxShadow: '0 4px 20px rgba(239, 68, 68, 0.4)',
             }}
           >
-            <Square size={24} color="white" />
+            <Square size={24} />
           </button>
         )}
-        
-        {/* Mute toggle */}
+
+        {/* Mute Toggle */}
         <button
           onClick={() => setIsMuted(!isMuted)}
           style={{
             width: 48,
             height: 48,
             borderRadius: '50%',
-            border: '1px solid rgba(255,255,255,0.2)',
-            background: isMuted ? 'rgba(239, 68, 68, 0.2)' : 'rgba(255,255,255,0.1)',
+            background: isMuted ? 'rgba(239, 68, 68, 0.2)' : 'rgba(255, 255, 255, 0.1)',
+            border: isMuted ? '1px solid rgba(239, 68, 68, 0.3)' : '1px solid rgba(255, 255, 255, 0.2)',
+            color: isMuted ? '#EF4444' : '#E2E8F0',
             cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
           }}
         >
-          {isMuted ? (
-            <VolumeX size={20} color="#EF4444" />
-          ) : (
-            <Volume2 size={20} color="#94A3B8" />
-          )}
+          {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
         </button>
       </div>
-      
-      {/* Debug info */}
+
+      {/* Debug */}
       <div style={{
         position: 'absolute',
-        bottom: 20,
+        bottom: 24,
         fontSize: 11,
         color: '#64748B',
       }}>
         {debug}
       </div>
       
-      {/* Browser support warning */}
-      {!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window) && (
+      {/* Notification */}
+      {notification && (
         <div style={{
-          position: 'absolute',
-          bottom: 60,
-          background: 'rgba(239, 68, 68, 0.2)',
-          border: '1px solid rgba(239, 68, 68, 0.3)',
-          borderRadius: 8,
-          padding: '12px 20px',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
+          position: 'fixed',
+          bottom: 100,
+          background: 'linear-gradient(135deg, #10B981, #059669)',
+          color: 'white',
+          padding: '12px 24px',
+          borderRadius: 12,
+          fontSize: 14,
+          fontWeight: 500,
+          boxShadow: '0 4px 20px rgba(16, 185, 129, 0.3)',
         }}>
-          <AlertCircle size={16} style={{ color: '#EF4444' }} />
-          <span style={{ color: '#F87171', fontSize: 13 }}>
-            Voice mode requires Chrome or Edge browser
-          </span>
+          <Sparkles size={16} style={{ display: 'inline', marginRight: 8, verticalAlign: 'middle' }} />
+          {notification}
         </div>
       )}
-      
+
       <style>{`
         @keyframes pulse {
           0%, 100% { transform: scale(1); opacity: 1; }
