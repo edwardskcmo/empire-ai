@@ -1,5 +1,15 @@
 // Empire AI - Shared Utilities & Helpers
-// Updated with Smart RAG semantic search
+// Updated with Smart RAG semantic search + Configurable Intelligence Cap
+
+// ============================================
+// INTELLIGENCE CONFIGURATION
+// ============================================
+export const INTELLIGENCE_CONFIG = {
+  DEFAULT_CAP: 2000,      // Default max items (increased from 500)
+  MIN_CAP: 500,           // Minimum allowed
+  MAX_CAP: 5000,          // Maximum allowed
+  WARNING_THRESHOLD: 0.8, // Show warning at 80% capacity
+};
 
 // ============================================
 // STORAGE KEYS
@@ -12,6 +22,7 @@ export const STORAGE_KEYS = {
   ISSUE_COLUMNS: 'empire_issueColumns',
   DEPARTMENTS: 'empire_departments',
   INTELLIGENCE: 'empire_intelligence',
+  INTELLIGENCE_CAP: 'empire_intelligenceCap', // NEW: User-configurable cap
   TEAM_MEMBERS: 'empire_teamMembers',
   PENDING_INVITES: 'empire_pendingInvites',
   SYSTEM_INSTRUCTIONS: 'empire_systemInstructions',
