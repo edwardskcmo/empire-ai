@@ -1,14 +1,17 @@
 import React, { useState } from 'react';
 import { 
   Settings, RefreshCw, Database, Wifi, Brain, Tag, FileText,
-  UserPlus, Mail, Crown, Shield, User, Eye, X, Edit2, Trash2
+  UserPlus, Mail, Crown, Shield, User, Eye, X, Edit2, Trash2,
+  AlertTriangle, Sliders
 } from 'lucide-react';
-import { ROLES, getStorageUsage } from '../utils';
+import { ROLES, getStorageUsage, INTELLIGENCE_CONFIG } from '../utils';
 
 export default function Systems({
   systemInstructions,
   setSystemInstructions,
   intelligenceIndex,
+  intelligenceCap,
+  setIntelligenceCap,
   teamMembers,
   setTeamMembers,
   pendingInvites,
@@ -32,11 +35,16 @@ export default function Systems({
   const docsCount = connectedDocs.filter(d => d.status === 'synced').length;
   
   // Intelligence stats
+  const intelligenceCount = intelligenceIndex.length;
   const resolvedIssues = intelligenceIndex.filter(i => i.sourceType === 'resolved_issue').length;
   const thisWeek = intelligenceIndex.filter(i => {
     const days = (Date.now() - new Date(i.createdAt).getTime()) / (1000 * 60 * 60 * 24);
     return days <= 7;
   }).length;
+
+  // Calculate capacity percentage for warning
+  const capacityPercent = (intelligenceCount / intelligenceCap) * 100;
+  const showCapacityWarning = capacityPercent >= (INTELLIGENCE_CONFIG.WARNING_THRESHOLD * 100);
 
   // Top tags
   const tagCounts = {};
@@ -54,6 +62,16 @@ export default function Systems({
     setSystemInstructions(tempInstructions);
     setEditingInstructions(false);
     logActivity('Updated system-wide AI instructions', 'settings');
+  };
+
+  // Handle intelligence cap change
+  const handleCapChange = (newCap) => {
+    const clampedCap = Math.max(
+      INTELLIGENCE_CONFIG.MIN_CAP,
+      Math.min(INTELLIGENCE_CONFIG.MAX_CAP, newCap)
+    );
+    setIntelligenceCap(clampedCap);
+    logActivity(`Updated intelligence cap to ${clampedCap} items`, 'settings');
   };
 
   // Send invite
@@ -286,18 +304,45 @@ export default function Systems({
         borderRadius: '12px',
         padding: '20px',
         marginBottom: '24px',
-        border: '1px solid rgba(255,255,255,0.06)'
+        border: showCapacityWarning 
+          ? '1px solid rgba(245, 158, 11, 0.5)' 
+          : '1px solid rgba(255,255,255,0.06)'
       }}>
         <h3 style={{ color: '#E2E8F0', fontSize: '16px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
           <Brain size={18} style={{ color: '#8B5CF6' }} />
           Central Intelligence
         </h3>
 
+        {/* Capacity Warning */}
+        {showCapacityWarning && (
+          <div style={{
+            background: 'rgba(245, 158, 11, 0.15)',
+            border: '1px solid rgba(245, 158, 11, 0.3)',
+            borderRadius: '8px',
+            padding: '12px 16px',
+            marginBottom: '16px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px'
+          }}>
+            <AlertTriangle size={20} style={{ color: '#F59E0B', flexShrink: 0 }} />
+            <div>
+              <p style={{ color: '#F59E0B', fontSize: '14px', fontWeight: '600', margin: 0 }}>
+                Intelligence storage at {capacityPercent.toFixed(0)}% capacity
+              </p>
+              <p style={{ color: '#FCD34D', fontSize: '12px', margin: '4px 0 0 0' }}>
+                Oldest items will be removed when the limit is reached. Consider increasing the cap below.
+              </p>
+            </div>
+          </div>
+        )}
+
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '20px' }}>
           <div style={{ background: 'rgba(15, 23, 42, 0.5)', borderRadius: '8px', padding: '12px' }}>
             <p style={{ color: '#64748B', fontSize: '12px', marginBottom: '4px' }}>Intelligence Items</p>
             <p style={{ color: '#E2E8F0', fontSize: '24px', fontWeight: '700', fontFamily: 'Space Mono, monospace', margin: 0 }}>
-              {intelligenceIndex.length}
+              {intelligenceCount}
+              <span style={{ fontSize: '12px', color: '#64748B', fontWeight: '400' }}> / {intelligenceCap}</span>
             </p>
           </div>
           <div style={{ background: 'rgba(15, 23, 42, 0.5)', borderRadius: '8px', padding: '12px' }}>
@@ -317,6 +362,82 @@ export default function Systems({
             <p style={{ color: '#10B981', fontSize: '24px', fontWeight: '700', fontFamily: 'Space Mono, monospace', margin: 0 }}>
               +{thisWeek}
             </p>
+          </div>
+        </div>
+
+        {/* Intelligence Cap Slider */}
+        <div style={{
+          background: 'rgba(15, 23, 42, 0.5)',
+          borderRadius: '8px',
+          padding: '16px',
+          marginBottom: '20px'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Sliders size={16} style={{ color: '#8B5CF6' }} />
+              <span style={{ color: '#E2E8F0', fontSize: '14px', fontWeight: '500' }}>Intelligence Capacity Limit</span>
+            </div>
+            <span style={{ 
+              color: '#8B5CF6', 
+              fontSize: '14px', 
+              fontWeight: '600',
+              fontFamily: 'Space Mono, monospace'
+            }}>
+              {intelligenceCap.toLocaleString()} items
+            </span>
+          </div>
+          
+          {/* Slider */}
+          <input
+            type="range"
+            min={INTELLIGENCE_CONFIG.MIN_CAP}
+            max={INTELLIGENCE_CONFIG.MAX_CAP}
+            step={100}
+            value={intelligenceCap}
+            onChange={(e) => handleCapChange(parseInt(e.target.value))}
+            style={{
+              width: '100%',
+              height: '6px',
+              borderRadius: '3px',
+              background: `linear-gradient(to right, #8B5CF6 0%, #8B5CF6 ${((intelligenceCap - INTELLIGENCE_CONFIG.MIN_CAP) / (INTELLIGENCE_CONFIG.MAX_CAP - INTELLIGENCE_CONFIG.MIN_CAP)) * 100}%, rgba(255,255,255,0.1) ${((intelligenceCap - INTELLIGENCE_CONFIG.MIN_CAP) / (INTELLIGENCE_CONFIG.MAX_CAP - INTELLIGENCE_CONFIG.MIN_CAP)) * 100}%, rgba(255,255,255,0.1) 100%)`,
+              cursor: 'pointer',
+              appearance: 'none',
+              WebkitAppearance: 'none'
+            }}
+          />
+          
+          {/* Range Labels */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px' }}>
+            <span style={{ color: '#64748B', fontSize: '11px' }}>{INTELLIGENCE_CONFIG.MIN_CAP}</span>
+            <span style={{ color: '#64748B', fontSize: '11px' }}>{INTELLIGENCE_CONFIG.MAX_CAP}</span>
+          </div>
+          
+          {/* Capacity Bar */}
+          <div style={{ marginTop: '12px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+              <span style={{ color: '#64748B', fontSize: '11px' }}>Current Usage</span>
+              <span style={{ 
+                color: capacityPercent >= 80 ? '#F59E0B' : capacityPercent >= 60 ? '#FCD34D' : '#10B981', 
+                fontSize: '11px',
+                fontWeight: '600'
+              }}>
+                {capacityPercent.toFixed(1)}%
+              </span>
+            </div>
+            <div style={{
+              height: '4px',
+              background: 'rgba(255,255,255,0.1)',
+              borderRadius: '2px',
+              overflow: 'hidden'
+            }}>
+              <div style={{
+                height: '100%',
+                width: `${Math.min(100, capacityPercent)}%`,
+                background: capacityPercent >= 80 ? '#F59E0B' : capacityPercent >= 60 ? '#FCD34D' : '#10B981',
+                borderRadius: '2px',
+                transition: 'width 0.3s ease'
+              }} />
+            </div>
           </div>
         </div>
 
@@ -583,6 +704,31 @@ export default function Systems({
           </div>
         </div>
       )}
+
+      {/* Slider Styles */}
+      <style>{`
+        input[type="range"]::-webkit-slider-thumb {
+          -webkit-appearance: none;
+          appearance: none;
+          width: 18px;
+          height: 18px;
+          border-radius: 50%;
+          background: #8B5CF6;
+          cursor: pointer;
+          border: 2px solid #E2E8F0;
+          box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+        }
+        
+        input[type="range"]::-moz-range-thumb {
+          width: 18px;
+          height: 18px;
+          border-radius: 50%;
+          background: #8B5CF6;
+          cursor: pointer;
+          border: 2px solid #E2E8F0;
+          box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+        }
+      `}</style>
     </div>
   );
 }
