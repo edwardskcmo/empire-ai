@@ -316,6 +316,8 @@ function App() {
       activeDepartment,
       departments,
       setDepartments,
+      conversations,
+      setConversations,
       knowledge,
       setKnowledge,
       issues,
