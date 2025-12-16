@@ -21,6 +21,7 @@ import VoiceModal from './components/VoiceModal';
 // Import utilities
 import {
   STORAGE_KEYS,
+  INTELLIGENCE_CONFIG, // NEW: Import config
   loadFromStorage,
   saveToStorage,
   DEFAULT_DEPARTMENTS,
@@ -89,6 +90,10 @@ function App() {
   const [intelligenceIndex, setIntelligenceIndex] = useState(() => 
     loadFromStorage(STORAGE_KEYS.INTELLIGENCE, [])
   );
+  // NEW: Configurable intelligence cap
+  const [intelligenceCap, setIntelligenceCap] = useState(() => 
+    loadFromStorage(STORAGE_KEYS.INTELLIGENCE_CAP, INTELLIGENCE_CONFIG.DEFAULT_CAP)
+  );
   const [teamMembers, setTeamMembers] = useState(() => 
     loadFromStorage(STORAGE_KEYS.TEAM_MEMBERS, [DEFAULT_TEAM_MEMBER])
   );
@@ -112,6 +117,7 @@ function App() {
   useEffect(() => { saveToStorage(STORAGE_KEYS.ISSUES, issues); }, [issues]);
   useEffect(() => { saveToStorage(STORAGE_KEYS.ISSUE_COLUMNS, issueColumns); }, [issueColumns]);
   useEffect(() => { saveToStorage(STORAGE_KEYS.INTELLIGENCE, intelligenceIndex); }, [intelligenceIndex]);
+  useEffect(() => { saveToStorage(STORAGE_KEYS.INTELLIGENCE_CAP, intelligenceCap); }, [intelligenceCap]); // NEW
   useEffect(() => { saveToStorage(STORAGE_KEYS.TEAM_MEMBERS, teamMembers); }, [teamMembers]);
   useEffect(() => { saveToStorage(STORAGE_KEYS.PENDING_INVITES, pendingInvites); }, [pendingInvites]);
   useEffect(() => { saveToStorage(STORAGE_KEYS.SYSTEM_INSTRUCTIONS, systemInstructions); }, [systemInstructions]);
@@ -197,17 +203,17 @@ function App() {
       tags,
       metadata,
       relevanceBoost,
-      embedding // NEW: Include embedding vector
+      embedding // Include embedding vector
     );
     
     setIntelligenceIndex(prev => {
       const newIndex = [item, ...prev];
-      // Keep max 500 items
-      return newIndex.slice(0, 500);
+      // Use configurable cap instead of hardcoded 500
+      return newIndex.slice(0, intelligenceCap);
     });
     
     return item;
-  }, []);
+  }, [intelligenceCap]); // Add intelligenceCap as dependency
 
   // ============================================
   // ACTIVITY LOGGING (with intelligence integration)
@@ -325,6 +331,8 @@ function App() {
       activities,
       logActivity,
       intelligenceIndex,
+      intelligenceCap, // NEW: Pass cap to pages
+      setIntelligenceCap, // NEW: Pass setter to pages
       addToIntelligence,
       queryIntelligence: queryIntelligenceWithEmbedding, // Use semantic-enhanced version
       systemInstructions,
@@ -342,7 +350,7 @@ function App() {
       renderDeptIcon,
       issueColumns,
       setIssueColumns,
-      generateEmbedding, // NEW: Pass embedding function to pages
+      generateEmbedding, // Pass embedding function to pages
     };
 
     switch (currentPage) {
