@@ -1,191 +1,236 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Send, Sparkles, Brain, FileText, CheckCircle } from 'lucide-react';
-import { formatDate, formatTimestamp, generateId, getSourceLabel } from '../utils';
+// Empire AI - Chat Interface
+// Department-specific AI conversations with RAG-enhanced context
 
-function Chat({
+import React, { useState, useRef, useEffect } from 'react';
+import { 
+  Send, Loader2, Sparkles, AlertCircle, CheckCircle2,
+  Globe, Building
+} from 'lucide-react';
+import { 
+  formatTimestamp, queryIntelligence, getSourceLabel, 
+  semanticSearch, renderDeptIcon 
+} from '../utils';
+
+export default function Chat({
   activeDepartment,
-  departments,
+  conversations,
+  setConversations,
+  systemInstructions,
+  intelligenceIndex,
   knowledge,
   connectedDocs,
   issues,
   setIssues,
-  intelligenceIndex,
-  queryIntelligence, // Now returns a Promise (async)
-  systemInstructions,
+  departments,
   logActivity,
   addToIntelligence,
-  conversations,
-  setConversations,
-  generateEmbedding, // NEW: For semantic search
 }) {
-  const [message, setMessage] = useState('');
+  const [input, setInput] = useState('');
   const [isThinking, setIsThinking] = useState(false);
-  const [issueCreatedNotification, setIssueCreatedNotification] = useState(null);
+  const [notification, setNotification] = useState(null);
+  const [searchAllDepts, setSearchAllDepts] = useState(false); // Item 5: Toggle state
+  const [ragStatus, setRagStatus] = useState({ active: false, source: 'none' }); // Track embedding source
   const messagesEndRef = useRef(null);
   
   const deptId = activeDepartment?.id || 'general';
-  const deptMessages = conversations[deptId] || [];
-
-  // Auto-scroll to bottom
+  const messages = conversations[deptId] || [];
+  
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [deptMessages, isThinking]);
-
-  // Build knowledge context for AI (now async for semantic search)
+  }, [messages, isThinking]);
+  
+  // Build knowledge context including issues and connected docs
   const buildKnowledgeContext = async (query) => {
     let context = '';
     
-    // 1. Query intelligence with semantic search
-    const relevantItems = await queryIntelligence(query, activeDepartment?.id);
-    if (relevantItems && relevantItems.length > 0) {
-      context += '=== RELEVANT COMPANY KNOWLEDGE ===\n';
-      relevantItems.slice(0, 5).forEach((item, i) => {
-        const label = getSourceLabel(item.sourceType);
-        context += `${i + 1}. [${label}] ${item.title}: ${item.content?.substring(0, 500)}...\n`;
-      });
-      context += '\n';
+    // Try semantic search first (with caching - Item 4)
+    try {
+      const semanticResults = await semanticSearch(
+        intelligenceIndex, 
+        query, 
+        searchAllDepts ? null : activeDepartment?.name, // Item 5: Pass null to search all
+        {
+          searchAllDepartments: searchAllDepts,
+          maxResults: 10,
+          useEmbeddings: true,
+        }
+      );
+      
+      if (semanticResults.length > 0) {
+        // Track RAG status for UI badge
+        setRagStatus({ 
+          active: true, 
+          source: semanticResults[0].embeddingSource || 'keyword'
+        });
+        
+        context += '\n=== RELEVANT COMPANY KNOWLEDGE ===\n';
+        semanticResults.forEach((item, i) => {
+          const label = getSourceLabel(item.sourceType);
+          context += `${i + 1}. [${label}] ${item.title}: ${item.content?.substring(0, 300)}...\n`;
+        });
+      } else {
+        setRagStatus({ active: false, source: 'none' });
+      }
+    } catch (error) {
+      console.log('Semantic search failed, using keyword search:', error);
+      // Fall back to keyword search
+      const keywordResults = queryIntelligence(
+        intelligenceIndex, 
+        query, 
+        searchAllDepts ? null : activeDepartment?.name
+      );
+      
+      if (keywordResults.length > 0) {
+        setRagStatus({ active: true, source: 'keyword' });
+        context += '\n=== RELEVANT COMPANY KNOWLEDGE ===\n';
+        keywordResults.forEach((item, i) => {
+          const label = getSourceLabel(item.sourceType);
+          context += `${i + 1}. [${label}] ${item.title}: ${item.content?.substring(0, 300)}...\n`;
+        });
+      }
     }
     
-    // 2. Include connected Google Docs/Sheets (full content)
-    const syncedDocs = connectedDocs?.filter(d => d.status === 'synced' && d.content) || [];
-    if (syncedDocs.length > 0) {
-      context += '=== CONNECTED GOOGLE DOCS/SHEETS ===\n';
-      syncedDocs.forEach(doc => {
-        context += `--- ${doc.name} (${doc.department}) ---\n`;
-        context += doc.content?.substring(0, 50000) + '\n\n';
-      });
+    // Add connected Google Docs/Sheets data
+    if (connectedDocs && connectedDocs.length > 0) {
+      const syncedDocs = connectedDocs.filter(d => d.status === 'synced' && d.content);
+      if (syncedDocs.length > 0) {
+        context += '\n=== CONNECTED DOCUMENTS ===\n';
+        syncedDocs.forEach(doc => {
+          context += `\n--- ${doc.name} (${doc.department}) ---\n`;
+          context += doc.content?.substring(0, 50000) + '\n';
+        });
+      }
     }
     
-    // 3. Include active issues
-    const activeIssues = issues?.filter(i => !i.archived) || [];
-    if (activeIssues.length > 0) {
-      context += '=== ISSUES BOARD (Active Issues) ===\n';
-      activeIssues.forEach((issue, i) => {
-        context += `${i + 1}. [${issue.status}] [${issue.priority}] ${issue.title} (Dept: ${issue.department}) - Assigned to: ${issue.assignee || 'Unassigned'}\n`;
-        if (issue.description) context += `   Description: ${issue.description}\n`;
-        context += `   Created: ${formatDate(issue.createdAt)}\n`;
-      });
-      context += '\n';
-    }
-    
-    // 4. Include resolved issues
-    const resolvedIssues = issues?.filter(i => i.archived || i.status === 'Resolved') || [];
-    if (resolvedIssues.length > 0) {
-      context += '=== RESOLVED/ARCHIVED ISSUES ===\n';
-      resolvedIssues.slice(0, 10).forEach((issue, i) => {
-        context += `${i + 1}. ${issue.title} - ${issue.status}\n`;
-        if (issue.resolutionNotes) context += `   Resolution: ${issue.resolutionNotes}\n`;
-      });
-      context += '\n';
+    // Add issues data
+    if (issues && issues.length > 0) {
+      const activeIssues = issues.filter(i => !i.archived);
+      const resolvedIssues = issues.filter(i => i.archived || i.status === 'Resolved');
+      
+      if (activeIssues.length > 0) {
+        context += '\n=== ISSUES BOARD (Active Issues) ===\n';
+        activeIssues.slice(0, 20).forEach((issue, i) => {
+          context += `${i + 1}. [${issue.status}] [${issue.priority}] ${issue.title} (Dept: ${issue.department}) - Assigned to: ${issue.assignee || 'Unassigned'}\n`;
+          if (issue.description) context += `   Description: ${issue.description}\n`;
+          context += `   Created: ${new Date(issue.createdAt).toLocaleDateString()}\n`;
+        });
+      }
+      
+      if (resolvedIssues.length > 0) {
+        context += '\n=== RESOLVED/ARCHIVED ISSUES ===\n';
+        resolvedIssues.slice(0, 10).forEach((issue, i) => {
+          context += `${i + 1}. ${issue.title} - ${issue.status}\n`;
+          if (issue.resolutionNotes) context += `   Resolution: ${issue.resolutionNotes}\n`;
+        });
+      }
     }
     
     return context;
   };
-
-  // Parse issue creation from AI response
+  
+  // Parse AI response for issue creation markers
   const parseIssueFromResponse = (response) => {
     const match = response.match(/\[ISSUE_CREATED\](.*?)\[\/ISSUE_CREATED\]/s);
     if (!match) return null;
     
-    const parts = match[1].trim().split('|').map(p => p.trim());
-    if (parts.length < 1) return null;
+    const parts = match[1].split('|').map(p => p.trim());
+    if (parts.length < 2) return null;
     
     return {
-      title: parts[0] || 'New Issue',
+      title: parts[0],
       priority: parts[1] || 'Medium',
       department: parts[2] || activeDepartment?.name || 'General',
       description: parts[3] || '',
     };
   };
-
+  
   // Create issue from parsed data
-  const createIssue = async (issueData) => {
+  const createIssue = (issueData) => {
+    const matchedDept = departments.find(d => 
+      d.name.toLowerCase().includes(issueData.department.toLowerCase()) ||
+      issueData.department.toLowerCase().includes(d.name.toLowerCase())
+    );
+    
     const newIssue = {
-      id: generateId('issue'),
+      id: `issue_${Date.now()}`,
       title: issueData.title,
       description: issueData.description,
-      department: issueData.department,
-      priority: issueData.priority,
+      department: matchedDept?.name || activeDepartment?.name || 'General',
+      priority: ['High', 'Medium', 'Low'].includes(issueData.priority) ? issueData.priority : 'Medium',
       status: 'Open',
       assignee: '',
       createdAt: new Date().toISOString(),
       archived: false,
     };
     
-    setIssues(prev => [newIssue, ...prev]);
+    setIssues(prev => [...prev, newIssue]);
+    logActivity(`Created issue via chat: ${newIssue.title}`, 'issue', newIssue.department);
     
-    // Log to intelligence
-    await addToIntelligence(
+    // Add to intelligence
+    addToIntelligence(
       'issue_created',
       newIssue.id,
       newIssue.title,
       `${newIssue.description} | Priority: ${newIssue.priority} | Department: ${newIssue.department}`,
       newIssue.department,
-      null,
+      ['issue', 'open', newIssue.priority.toLowerCase()],
       { priority: newIssue.priority },
       newIssue.priority === 'High' ? 3 : newIssue.priority === 'Medium' ? 2 : 1
     );
     
-    logActivity(`Created issue: ${newIssue.title}`, 'issue', newIssue.department);
-    
-    // Show notification
-    setIssueCreatedNotification(newIssue.title);
-    setTimeout(() => setIssueCreatedNotification(null), 4000);
-    
-    return newIssue;
+    setNotification({ type: 'success', message: `Issue created: ${newIssue.title}` });
+    setTimeout(() => setNotification(null), 3000);
   };
-
+  
   // Clean response for display (remove markers)
   const cleanResponseForDisplay = (response) => {
     return response.replace(/\[ISSUE_CREATED\].*?\[\/ISSUE_CREATED\]/gs, '').trim();
   };
-
-  // Send message
+  
   const sendMessage = async () => {
-    if (!message.trim() || isThinking) return;
+    if (!input.trim() || isThinking) return;
     
-    const userMessage = message.trim();
-    setMessage('');
+    const userMessage = input.trim();
+    setInput('');
     
     // Add user message to conversation
-    const newUserMsg = {
-      id: generateId('msg'),
-      role: 'user',
-      content: userMessage,
-      timestamp: new Date().toISOString(),
-    };
-    
-    setConversations(prev => ({
-      ...prev,
-      [deptId]: [...(prev[deptId] || []), newUserMsg],
-    }));
+    const newMessages = [...messages, { role: 'user', content: userMessage, timestamp: new Date().toISOString() }];
+    setConversations(prev => ({ ...prev, [deptId]: newMessages }));
     
     setIsThinking(true);
     
     try {
-      // Build context with semantic search
+      // Build context with semantic search (uses cache - Item 4)
       const knowledgeContext = await buildKnowledgeContext(userMessage);
       
       // Build system prompt
       let systemPrompt = `You are Empire AI, the operational intelligence assistant for Empire Remodeling.
-      
-Current Department: ${activeDepartment?.name || 'General'}
-Department Focus: ${activeDepartment?.description || 'Cross-functional support'}
 
+Current Department: ${activeDepartment?.name || 'General'}
+Department Focus: ${activeDepartment?.description || 'General assistance'}
+${searchAllDepts ? '\n[CROSS-DEPARTMENT SEARCH ENABLED - Drawing from all departments]\n' : ''}
 ${knowledgeContext}
 
-${systemInstructions ? `\n=== SYSTEM-WIDE INSTRUCTIONS ===\n${systemInstructions}` : ''}
-${activeDepartment?.instructions ? `\n=== ${activeDepartment.name} DEPARTMENT INSTRUCTIONS ===\n${activeDepartment.instructions}` : ''}
+CRITICAL: You have access to the company's knowledge base, connected Google Sheets/Docs, and issues board. USE THIS DATA to answer questions accurately.
 
-ISSUE CREATION:
-If the user asks you to create, log, add, or report an issue, include this marker in your response:
-[ISSUE_CREATED] Title | Priority | Department | Description [/ISSUE_CREATED]
-Example: [ISSUE_CREATED] Permit delay - Johnson | High | Production | Waiting on city approval [/ISSUE_CREATED]
+When asked about projects, budgets, schedules, or any company data - reference the specific information provided above.
 
-Be helpful, specific, and reference the company knowledge when relevant.`;
+ISSUE CREATION: If the user asks you to create, log, add, or report an issue, include this marker in your response:
+[ISSUE_CREATED] Issue Title | Priority | Department | Description [/ISSUE_CREATED]
+Example: [ISSUE_CREATED] Permit delay - Johnson | High | Production & Project Management | Waiting on city approval [/ISSUE_CREATED]
 
-      // Get recent conversation history
-      const recentHistory = deptMessages.slice(-10).map(m => ({
+Be helpful, specific, and reference actual company data when available.`;
+
+      // Add custom instructions
+      if (systemInstructions?.trim()) {
+        systemPrompt += `\n\n=== SYSTEM-WIDE INSTRUCTIONS ===\n${systemInstructions}`;
+      }
+      if (activeDepartment?.instructions?.trim()) {
+        systemPrompt += `\n\n=== ${activeDepartment.name} DEPARTMENT INSTRUCTIONS ===\n${activeDepartment.instructions}`;
+      }
+      
+      // Prepare conversation history (last 10 messages)
+      const history = newMessages.slice(-10).map(m => ({
         role: m.role,
         content: m.content,
       }));
@@ -197,269 +242,253 @@ Be helpful, specific, and reference the company knowledge when relevant.`;
         body: JSON.stringify({
           message: userMessage,
           systemPrompt,
-          conversationHistory: recentHistory,
+          conversationHistory: history,
         }),
       });
       
-      let aiResponse;
-      if (response.ok) {
-        const data = await response.json();
-        aiResponse = data.response;
-      } else {
-        aiResponse = "I'm having trouble connecting right now. Please try again.";
-      }
+      if (!response.ok) throw new Error('API request failed');
+      
+      const data = await response.json();
+      let aiResponse = data.response;
       
       // Check for issue creation
       const issueData = parseIssueFromResponse(aiResponse);
       if (issueData) {
-        await createIssue(issueData);
+        createIssue(issueData);
+        aiResponse = cleanResponseForDisplay(aiResponse);
       }
       
-      // Clean and add AI response
-      const cleanedResponse = cleanResponseForDisplay(aiResponse);
-      const newAiMsg = {
-        id: generateId('msg'),
-        role: 'assistant',
-        content: cleanedResponse,
-        timestamp: new Date().toISOString(),
-      };
+      // Add AI response
+      const updatedMessages = [...newMessages, { role: 'assistant', content: aiResponse, timestamp: new Date().toISOString() }];
+      setConversations(prev => ({ ...prev, [deptId]: updatedMessages }));
       
-      setConversations(prev => ({
-        ...prev,
-        [deptId]: [...(prev[deptId] || []), newAiMsg],
-      }));
-      
-      // Log to intelligence (with embedding)
-      await addToIntelligence(
-        'chat_query',
-        newAiMsg.id,
-        `Q: ${userMessage.substring(0, 100)}`,
-        `User asked: ${userMessage}\n\nAI responded: ${cleanedResponse.substring(0, 500)}`,
-        activeDepartment?.id || 'general',
-        null,
-        { query: userMessage },
-        1
-      );
+      // Log to activity and intelligence
+      logActivity(`Chat in ${activeDepartment?.name || 'General'}`, 'chat', activeDepartment?.name);
       
     } catch (error) {
       console.error('Chat error:', error);
-      const errorMsg = {
-        id: generateId('msg'),
-        role: 'assistant',
-        content: "I encountered an error. Please try again.",
-        timestamp: new Date().toISOString(),
-      };
-      setConversations(prev => ({
-        ...prev,
-        [deptId]: [...(prev[deptId] || []), errorMsg],
-      }));
+      const errorMessage = "I'm having trouble connecting. Please try again.";
+      const updatedMessages = [...newMessages, { role: 'assistant', content: errorMessage, timestamp: new Date().toISOString() }];
+      setConversations(prev => ({ ...prev, [deptId]: updatedMessages }));
     } finally {
       setIsThinking(false);
     }
   };
-
+  
   const handleKeyPress = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
     }
   };
-
-  const hasCustomInstructions = systemInstructions || activeDepartment?.instructions;
-
+  
   return (
-    <div style={{
-      height: '100vh',
-      display: 'flex',
-      flexDirection: 'column',
-      backgroundColor: 'transparent',
-    }}>
-      {/* Issue Created Notification */}
-      {issueCreatedNotification && (
-        <div style={{
-          position: 'fixed',
-          top: 20,
-          right: 20,
-          backgroundColor: 'rgba(16, 185, 129, 0.95)',
-          color: 'white',
-          padding: '12px 20px',
-          borderRadius: 8,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 10,
-          zIndex: 1000,
-          boxShadow: '0 4px 20px rgba(0,0,0,0.3)',
-        }}>
-          <CheckCircle size={18} />
-          Issue created: {issueCreatedNotification}
-        </div>
-      )}
-
-      {/* Header */}
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      {/* Header with Department Toggle - Item 5 */}
       <div style={{
-        padding: '16px 24px',
+        padding: '16px 20px',
         borderBottom: '1px solid rgba(255,255,255,0.06)',
         display: 'flex',
         alignItems: 'center',
-        gap: 12,
+        justifyContent: 'space-between',
+        gap: '12px',
       }}>
-        {activeDepartment && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <div style={{
             width: 40,
             height: 40,
             borderRadius: 10,
-            backgroundColor: activeDepartment.color + '20',
-            color: activeDepartment.color,
+            background: activeDepartment?.color || '#3B82F6',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
           }}>
-            <Sparkles size={20} />
+            {renderDeptIcon(activeDepartment?.icon, 20, 'text-white')}
           </div>
-        )}
-        <div style={{ flex: 1 }}>
-          <h2 style={{ color: '#E2E8F0', fontSize: 18, fontWeight: 600, margin: 0 }}>
-            {activeDepartment?.name || 'General Chat'}
-          </h2>
-          <p style={{ color: '#64748B', fontSize: 13, margin: 0 }}>
-            {activeDepartment?.description || 'Chat with Empire AI'}
-          </p>
+          <div>
+            <div style={{ fontWeight: 600, color: '#E2E8F0' }}>
+              {activeDepartment?.name || 'General Chat'}
+            </div>
+            <div style={{ fontSize: 12, color: '#64748B' }}>
+              {activeDepartment?.description || 'Ask anything'}
+            </div>
+          </div>
         </div>
-        {hasCustomInstructions && (
-          <div style={{
-            backgroundColor: 'rgba(249, 115, 22, 0.15)',
-            color: '#F97316',
-            padding: '4px 10px',
-            borderRadius: 12,
-            fontSize: 11,
-            fontWeight: 600,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 4,
-          }}>
-            <FileText size={12} />
-            Custom Instructions Active
-          </div>
-        )}
-        <div style={{
-          backgroundColor: 'rgba(139, 92, 246, 0.15)',
-          color: '#A78BFA',
-          padding: '4px 10px',
-          borderRadius: 12,
-          fontSize: 11,
-          fontWeight: 600,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 4,
-        }}>
-          <Brain size={12} />
-          RAG Enhanced
+        
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          {/* Item 5: Search All Departments Toggle */}
+          <button
+            onClick={() => setSearchAllDepts(!searchAllDepts)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '6px 12px',
+              borderRadius: 6,
+              border: '1px solid',
+              borderColor: searchAllDepts ? '#3B82F6' : 'rgba(255,255,255,0.1)',
+              background: searchAllDepts ? 'rgba(59,130,246,0.2)' : 'rgba(255,255,255,0.05)',
+              color: searchAllDepts ? '#60A5FA' : '#94A3B8',
+              fontSize: 12,
+              cursor: 'pointer',
+              transition: 'all 0.2s',
+            }}
+            title={searchAllDepts ? 'Searching all departments' : 'Searching current department only'}
+          >
+            {searchAllDepts ? <Globe size={14} /> : <Building size={14} />}
+            {searchAllDepts ? 'All Depts' : 'This Dept'}
+          </button>
+          
+          {/* RAG Status Badge */}
+          {ragStatus.active && (
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              padding: '4px 8px',
+              borderRadius: 4,
+              background: ragStatus.source === 'cache' ? 'rgba(16,185,129,0.2)' : 'rgba(139,92,246,0.2)',
+              color: ragStatus.source === 'cache' ? '#10B981' : '#A78BFA',
+              fontSize: 11,
+            }}>
+              <Sparkles size={12} />
+              {ragStatus.source === 'cache' ? 'RAG (Cached)' : ragStatus.source === 'api' ? 'RAG Enhanced' : 'RAG Active'}
+            </div>
+          )}
+          
+          {/* Custom Instructions Badge */}
+          {(systemInstructions?.trim() || activeDepartment?.instructions?.trim()) && (
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              padding: '4px 8px',
+              borderRadius: 4,
+              background: 'rgba(249,115,22,0.2)',
+              color: '#FB923C',
+              fontSize: 11,
+            }}>
+              <Sparkles size={12} />
+              Custom Instructions
+            </div>
+          )}
         </div>
       </div>
-
-      {/* Messages */}
+      
+      {/* Notification Toast */}
+      {notification && (
+        <div style={{
+          position: 'absolute',
+          top: 80,
+          right: 20,
+          padding: '12px 16px',
+          borderRadius: 8,
+          background: notification.type === 'success' ? 'rgba(16,185,129,0.9)' : 'rgba(239,68,68,0.9)',
+          color: 'white',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          fontSize: 14,
+          zIndex: 100,
+          boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+        }}>
+          {notification.type === 'success' ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
+          {notification.message}
+        </div>
+      )}
+      
+      {/* Messages Area */}
       <div style={{
         flex: 1,
         overflowY: 'auto',
-        padding: '20px 24px',
+        padding: '20px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '16px',
       }}>
-        {deptMessages.length === 0 && (
+        {messages.length === 0 && (
           <div style={{
             textAlign: 'center',
             color: '#64748B',
-            marginTop: 60,
+            padding: '60px 20px',
           }}>
-            <Sparkles size={48} style={{ marginBottom: 16, opacity: 0.3 }} />
-            <p style={{ fontSize: 16 }}>Start a conversation with Empire AI</p>
-            <p style={{ fontSize: 13, marginTop: 8 }}>
-              Ask questions, get insights, or create issues
-            </p>
+            <Sparkles size={48} style={{ marginBottom: 16, opacity: 0.5 }} />
+            <div style={{ fontSize: 18, marginBottom: 8 }}>Start a conversation</div>
+            <div style={{ fontSize: 14 }}>
+              Ask about {activeDepartment?.name || 'anything'} or request help with tasks
+            </div>
+            {searchAllDepts && (
+              <div style={{ fontSize: 12, marginTop: 12, color: '#60A5FA' }}>
+                <Globe size={14} style={{ display: 'inline', marginRight: 4 }} />
+                Cross-department search enabled
+              </div>
+            )}
           </div>
         )}
         
-        {deptMessages.map(msg => (
+        {messages.map((msg, idx) => (
           <div
-            key={msg.id}
+            key={idx}
             style={{
               display: 'flex',
               justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start',
-              marginBottom: 16,
             }}
           >
             <div style={{
-              maxWidth: '70%',
+              maxWidth: '75%',
               padding: '12px 16px',
               borderRadius: 12,
-              backgroundColor: msg.role === 'user' 
-                ? 'rgba(59, 130, 246, 0.2)' 
+              background: msg.role === 'user' 
+                ? 'linear-gradient(135deg, #3B82F6, #2563EB)'
                 : 'rgba(30, 41, 59, 0.8)',
               color: '#E2E8F0',
             }}>
-              <p style={{ margin: 0, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
-                {msg.content}
-              </p>
-              <span style={{
+              <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{msg.content}</div>
+              <div style={{
                 fontSize: 10,
-                color: '#64748B',
-                marginTop: 6,
-                display: 'block',
+                color: msg.role === 'user' ? 'rgba(255,255,255,0.6)' : '#64748B',
+                marginTop: 8,
+                textAlign: 'right',
               }}>
                 {formatTimestamp(msg.timestamp)}
-              </span>
+              </div>
             </div>
           </div>
         ))}
         
         {isThinking && (
-          <div style={{
-            display: 'flex',
-            justifyContent: 'flex-start',
-            marginBottom: 16,
-          }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
             <div style={{
               padding: '12px 16px',
               borderRadius: 12,
-              backgroundColor: 'rgba(30, 41, 59, 0.8)',
+              background: 'rgba(30, 41, 59, 0.8)',
               color: '#94A3B8',
               display: 'flex',
               alignItems: 'center',
-              gap: 8,
+              gap: '8px',
             }}>
-              <span>Empire AI is thinking</span>
-              <span className="thinking-dots" style={{ display: 'flex', gap: 4 }}>
-                <span style={{
-                  width: 6, height: 6, borderRadius: '50%',
-                  backgroundColor: '#3B82F6',
-                }}>.</span>
-                <span style={{
-                  width: 6, height: 6, borderRadius: '50%',
-                  backgroundColor: '#3B82F6',
-                }}>.</span>
-                <span style={{
-                  width: 6, height: 6, borderRadius: '50%',
-                  backgroundColor: '#3B82F6',
-                }}>.</span>
-              </span>
+              <Loader2 size={16} className="animate-spin" style={{ animation: 'spin 1s linear infinite' }} />
+              Empire AI is thinking...
             </div>
           </div>
         )}
         
         <div ref={messagesEndRef} />
       </div>
-
-      {/* Input */}
+      
+      {/* Input Area */}
       <div style={{
-        padding: '16px 24px',
+        padding: '16px 20px',
         borderTop: '1px solid rgba(255,255,255,0.06)',
       }}>
         <div style={{
           display: 'flex',
-          gap: 12,
+          gap: '12px',
           alignItems: 'flex-end',
         }}>
           <textarea
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
             onKeyPress={handleKeyPress}
             placeholder={`Message ${activeDepartment?.name || 'Empire AI'}...`}
             disabled={isThinking}
@@ -468,7 +497,7 @@ Be helpful, specific, and reference the company knowledge when relevant.`;
               padding: '12px 16px',
               borderRadius: 12,
               border: '1px solid rgba(255,255,255,0.1)',
-              backgroundColor: 'rgba(30, 41, 59, 0.6)',
+              background: 'rgba(15, 23, 42, 0.6)',
               color: '#E2E8F0',
               fontSize: 14,
               resize: 'none',
@@ -481,15 +510,16 @@ Be helpful, specific, and reference the company knowledge when relevant.`;
           />
           <button
             onClick={sendMessage}
-            disabled={!message.trim() || isThinking}
+            disabled={!input.trim() || isThinking}
             style={{
-              width: 48,
-              height: 48,
+              padding: '12px 16px',
               borderRadius: 12,
               border: 'none',
-              backgroundColor: message.trim() && !isThinking ? '#3B82F6' : 'rgba(59, 130, 246, 0.3)',
-              color: 'white',
-              cursor: message.trim() && !isThinking ? 'pointer' : 'not-allowed',
+              background: input.trim() && !isThinking 
+                ? 'linear-gradient(135deg, #3B82F6, #2563EB)'
+                : 'rgba(255,255,255,0.1)',
+              color: input.trim() && !isThinking ? 'white' : '#64748B',
+              cursor: input.trim() && !isThinking ? 'pointer' : 'not-allowed',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -500,8 +530,14 @@ Be helpful, specific, and reference the company knowledge when relevant.`;
           </button>
         </div>
       </div>
+      
+      {/* Animation styles */}
+      <style>{`
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
     </div>
   );
 }
-
-export default Chat;
