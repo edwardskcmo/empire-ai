@@ -485,7 +485,57 @@ export default function App() {
 
         {/* Nav Items */}
         <nav style={{ flex: 1, padding: '16px 12px', overflowY: 'auto' }}>
-          {navItems.map(item => (
+          {/* Dashboard */}
+          {navItems.filter(item => item.id === 'dashboard').map(item => (
+            <button
+              key={item.id}
+              onClick={() => { setCurrentPage(item.id); setActiveDepartment(null); }}
+              style={{
+                width: '100%',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 12,
+                padding: sidebarCollapsed ? '12px' : '12px 16px',
+                marginBottom: 4,
+                background: currentPage === item.id ? 'rgba(59, 130, 246, 0.1)' : 'transparent',
+                border: 'none',
+                borderRadius: 10,
+                color: currentPage === item.id ? '#3B82F6' : '#94A3B8',
+                cursor: 'pointer',
+                transition: 'all 0.2s',
+                justifyContent: sidebarCollapsed ? 'center' : 'flex-start',
+                position: 'relative',
+              }}
+            >
+              <item.icon size={20} />
+              {!sidebarCollapsed && <span style={{ fontSize: 14, fontWeight: 500 }}>{item.label}</span>}
+            </button>
+          ))}
+
+          {/* Voice Mode Button - between Dashboard and Systems */}
+          <button
+            onClick={() => setShowVoiceModal(true)}
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 12,
+              padding: sidebarCollapsed ? '12px' : '12px 16px',
+              marginBottom: 4,
+              background: 'rgba(16, 185, 129, 0.1)',
+              border: '1px solid rgba(16, 185, 129, 0.2)',
+              borderRadius: 10,
+              color: '#10B981',
+              cursor: 'pointer',
+              justifyContent: sidebarCollapsed ? 'center' : 'flex-start',
+            }}
+          >
+            <Mic size={20} />
+            {!sidebarCollapsed && <span style={{ fontSize: 14, fontWeight: 500 }}>Voice Mode</span>}
+          </button>
+
+          {/* Remaining Nav Items (Systems, Knowledge, Issues, Help) */}
+          {navItems.filter(item => item.id !== 'dashboard').map(item => (
             <button
               key={item.id}
               onClick={() => { setCurrentPage(item.id); setActiveDepartment(null); }}
@@ -526,28 +576,6 @@ export default function App() {
               )}
             </button>
           ))}
-
-          {/* Voice Mode Button */}
-          <button
-            onClick={() => setShowVoiceModal(true)}
-            style={{
-              width: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 12,
-              padding: sidebarCollapsed ? '12px' : '12px 16px',
-              marginBottom: 4,
-              background: 'rgba(16, 185, 129, 0.1)',
-              border: '1px solid rgba(16, 185, 129, 0.2)',
-              borderRadius: 10,
-              color: '#10B981',
-              cursor: 'pointer',
-              justifyContent: sidebarCollapsed ? 'center' : 'flex-start',
-            }}
-          >
-            <Mic size={20} />
-            {!sidebarCollapsed && <span style={{ fontSize: 14, fontWeight: 500 }}>Voice Mode</span>}
-          </button>
 
           {/* Departments Section */}
           {!sidebarCollapsed && (
