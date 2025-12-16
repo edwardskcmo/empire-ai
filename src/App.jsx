@@ -1,15 +1,16 @@
+// Empire AI - Main Application Shell
+// Version 3.0 - With Duplicate Detection, Knowledge Gaps, Analytics
+
 import React, { useState, useEffect, useCallback } from 'react';
-import {
-  LayoutDashboard, Settings, BookOpen, ClipboardList, HelpCircle,
-  ChevronLeft, ChevronRight, Mic, Menu, X, Plus, Search,
-  Building, TrendingUp, DollarSign, Wrench, Calculator, Users,
-  ShieldCheck, ClipboardCheck, Briefcase, Target, Lightbulb, Package,
-  Home, PiggyBank, UserCheck, Shield, Clipboard, BarChart, FileText,
-  Folder, Star, Heart, Zap, Globe, Smartphone, Palette, BookOpenCheck,
-  MessageSquare, Brain, Activity
+import { 
+  LayoutDashboard, Settings, BookOpen, ClipboardList, HelpCircle, Mic, 
+  ChevronLeft, ChevronRight, Menu, X, Building, TrendingUp, DollarSign, 
+  Wrench, Calculator, Users, ShieldCheck, ClipboardCheck, Briefcase, 
+  Target, Lightbulb, Package, Home, PiggyBank, UserCheck, Shield, 
+  Clipboard, BarChart, FileText, Folder, Star, Heart, Zap, Globe, 
+  Smartphone, Palette, BookOpenCheck, MessageSquare
 } from 'lucide-react';
 
-// Import pages
 import Dashboard from './pages/Dashboard';
 import Chat from './pages/Chat';
 import Knowledge from './pages/Knowledge';
@@ -18,60 +19,76 @@ import Systems from './pages/Systems';
 import Help from './pages/Help';
 import VoiceModal from './components/VoiceModal';
 
-// Import utilities
-import {
-  STORAGE_KEYS,
-  INTELLIGENCE_CONFIG, // NEW: Import config
-  loadFromStorage,
+import { 
+  STORAGE_KEYS, 
+  loadFromStorage, 
   saveToStorage,
-  DEFAULT_DEPARTMENTS,
-  DEFAULT_TEAM_MEMBER,
-  DEFAULT_COLUMNS,
-  ROLES,
   extractTags,
   createIntelligenceItem,
   queryIntelligence,
-  generateId,
-  formatDate,
-  cosineSimilarity,
+  normalizeTags,
+  checkForDuplicate,
+  recordKnowledgeGap,
+  getKnowledgeGaps,
+  resolveKnowledgeGap,
+  deleteKnowledgeGap,
+  clearResolvedGaps,
+  trackChatMessage,
+  trackVoiceSession,
+  trackIssueCreated,
+  trackIssueResolved,
+  trackDocConnected,
+  trackKnowledgeAdded,
+  trackSearch,
+  getAnalyticsSummary,
+  resetAnalytics,
+  trimConversationHistory,
+  getConversationSummary,
+  CONVERSATION_MEMORY_CONFIG,
+  DEFAULT_DEPARTMENTS,
+  DEFAULT_TEAM_MEMBER,
+  DEFAULT_COLUMNS,
+  INTELLIGENCE_CONFIG,
 } from './utils';
 
-// Icon mapping for department icons
+// Icon mapping for dynamic icon rendering
 const ICON_MAP = {
   Building, TrendingUp, DollarSign, Wrench, Calculator, Users,
   ShieldCheck, ClipboardCheck, Briefcase, Target, Lightbulb, Package,
   Home, PiggyBank, UserCheck, Shield, Clipboard, BarChart, FileText,
-  Folder, Star, Heart, Zap, Globe, Smartphone, Palette, BookOpen: BookOpenCheck,
+  Folder, Star, Heart, Zap, Globe, Smartphone, Palette, BookOpenCheck,
   Settings, LayoutDashboard, HelpCircle, MessageSquare
 };
 
-// Render department icon (handles both Lucide names and emojis)
-export const renderDeptIcon = (iconName, size = 20) => {
+const renderDeptIcon = (iconName, size = 16) => {
   if (!iconName) return null;
   
-  // Check if it's a Lucide icon name (starts with capital letter)
-  if (ICON_MAP[iconName]) {
+  // Check if it's a Lucide icon name (starts with capital letter, no emoji)
+  if (typeof iconName === 'string' && /^[A-Z]/.test(iconName) && iconName.length > 1) {
     const IconComponent = ICON_MAP[iconName];
-    return <IconComponent size={size} />;
+    if (IconComponent) {
+      return <IconComponent size={size} />;
+    }
   }
   
   // Otherwise treat as emoji
   return <span style={{ fontSize: size }}>{iconName}</span>;
 };
 
-function App() {
-  // ============================================
-  // STATE MANAGEMENT
-  // ============================================
+export default function App() {
+  // Navigation state
   const [currentPage, setCurrentPage] = useState('dashboard');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showVoiceModal, setShowVoiceModal] = useState(false);
-  const [activeDepartment, setActiveDepartment] = useState(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   
-  // Data state
+  // Department state
   const [departments, setDepartments] = useState(() => 
     loadFromStorage(STORAGE_KEYS.DEPARTMENTS, DEFAULT_DEPARTMENTS)
   );
+  const [activeDepartment, setActiveDepartment] = useState(null);
+  
+  // Core data state
   const [conversations, setConversations] = useState(() => 
     loadFromStorage(STORAGE_KEYS.CONVERSATIONS, {})
   );
@@ -87,29 +104,42 @@ function App() {
   const [issueColumns, setIssueColumns] = useState(() => 
     loadFromStorage(STORAGE_KEYS.ISSUE_COLUMNS, DEFAULT_COLUMNS)
   );
+  
+  // Intelligence state
   const [intelligenceIndex, setIntelligenceIndex] = useState(() => 
     loadFromStorage(STORAGE_KEYS.INTELLIGENCE, [])
   );
-  // NEW: Configurable intelligence cap
   const [intelligenceCap, setIntelligenceCap] = useState(() => 
     loadFromStorage(STORAGE_KEYS.INTELLIGENCE_CAP, INTELLIGENCE_CONFIG.DEFAULT_CAP)
   );
+  
+  // Team state
   const [teamMembers, setTeamMembers] = useState(() => 
     loadFromStorage(STORAGE_KEYS.TEAM_MEMBERS, [DEFAULT_TEAM_MEMBER])
   );
   const [pendingInvites, setPendingInvites] = useState(() => 
     loadFromStorage(STORAGE_KEYS.PENDING_INVITES, [])
   );
+  
+  // Instructions state
   const [systemInstructions, setSystemInstructions] = useState(() => 
     loadFromStorage(STORAGE_KEYS.SYSTEM_INSTRUCTIONS, '')
   );
+  
+  // Connected docs state
   const [connectedDocs, setConnectedDocs] = useState(() => 
     loadFromStorage(STORAGE_KEYS.CONNECTED_DOCS, [])
   );
+  
+  // Knowledge gaps state (Item 8)
+  const [knowledgeGaps, setKnowledgeGaps] = useState(() => 
+    getKnowledgeGaps()
+  );
 
-  // ============================================
-  // PERSISTENCE - Save to localStorage
-  // ============================================
+  // Pending message from dashboard quick chat
+  const [pendingMessage, setPendingMessage] = useState(null);
+
+  // Persist to localStorage
   useEffect(() => { saveToStorage(STORAGE_KEYS.DEPARTMENTS, departments); }, [departments]);
   useEffect(() => { saveToStorage(STORAGE_KEYS.CONVERSATIONS, conversations); }, [conversations]);
   useEffect(() => { saveToStorage(STORAGE_KEYS.KNOWLEDGE, knowledge); }, [knowledge]);
@@ -117,112 +147,41 @@ function App() {
   useEffect(() => { saveToStorage(STORAGE_KEYS.ISSUES, issues); }, [issues]);
   useEffect(() => { saveToStorage(STORAGE_KEYS.ISSUE_COLUMNS, issueColumns); }, [issueColumns]);
   useEffect(() => { saveToStorage(STORAGE_KEYS.INTELLIGENCE, intelligenceIndex); }, [intelligenceIndex]);
-  useEffect(() => { saveToStorage(STORAGE_KEYS.INTELLIGENCE_CAP, intelligenceCap); }, [intelligenceCap]); // NEW
+  useEffect(() => { saveToStorage(STORAGE_KEYS.INTELLIGENCE_CAP, intelligenceCap); }, [intelligenceCap]);
   useEffect(() => { saveToStorage(STORAGE_KEYS.TEAM_MEMBERS, teamMembers); }, [teamMembers]);
   useEffect(() => { saveToStorage(STORAGE_KEYS.PENDING_INVITES, pendingInvites); }, [pendingInvites]);
   useEffect(() => { saveToStorage(STORAGE_KEYS.SYSTEM_INSTRUCTIONS, systemInstructions); }, [systemInstructions]);
   useEffect(() => { saveToStorage(STORAGE_KEYS.CONNECTED_DOCS, connectedDocs); }, [connectedDocs]);
 
-  // ============================================
-  // SMART RAG - EMBEDDING GENERATION
-  // ============================================
-  const generateEmbedding = async (text) => {
-    if (!text || text.length < 10) return null;
-    
-    try {
-      const response = await fetch('/api/generate-embedding', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: text.substring(0, 8000) }) // Limit input size
-      });
-      
-      if (!response.ok) {
-        console.warn('Embedding generation failed:', response.status);
-        return null;
-      }
-      
-      const data = await response.json();
-      return data.embedding || null;
-    } catch (error) {
-      console.warn('Embedding generation error:', error);
-      return null;
-    }
-  };
+  // Refresh knowledge gaps when they change elsewhere
+  const refreshKnowledgeGaps = useCallback(() => {
+    setKnowledgeGaps(getKnowledgeGaps());
+  }, []);
 
-  // Query intelligence with semantic search
-  const queryIntelligenceWithEmbedding = async (query, department = null) => {
-    // Generate embedding for the query
-    const queryEmbedding = await generateEmbedding(query);
-    
-    // Use the enhanced queryIntelligence from utils.js
-    return queryIntelligence(intelligenceIndex, query, department, queryEmbedding);
-  };
-
-  // ============================================
-  // SMART TAGGING (from previous session)
-  // ============================================
-  const generateSmartTags = async (content, title = '', sourceType = '') => {
+  // AI Tag Generation
+  const generateSmartTags = async (content, title, sourceType) => {
     try {
       const response = await fetch('/api/generate-tags', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content, title, sourceType })
+        body: JSON.stringify({ content: content?.substring(0, 1000), title, sourceType }),
       });
-      
-      if (!response.ok) {
-        console.warn('Smart tag generation failed, using fallback');
-        return extractTags(content + ' ' + title);
+      if (response.ok) {
+        const data = await response.json();
+        return normalizeTags(data.tags || []);
       }
-      
-      const data = await response.json();
-      return data.tags || extractTags(content + ' ' + title);
-    } catch (error) {
-      console.warn('Tag generation error:', error);
-      return extractTags(content + ' ' + title);
+    } catch (e) {
+      console.log('Smart tags unavailable, using extraction');
     }
+    return normalizeTags(extractTags(content));
   };
 
-  // ============================================
-  // INTELLIGENCE SYSTEM - ADD TO INDEX
-  // ============================================
-  const addToIntelligence = useCallback(async (sourceType, sourceId, title, content, department, customTags = null, metadata = {}, relevanceBoost = 0) => {
-    // Generate smart tags if not provided
-    const tags = customTags || await generateSmartTags(content, title, sourceType);
-    
-    // Generate embedding for semantic search
-    const textForEmbedding = `${title} ${content}`.trim();
-    const embedding = await generateEmbedding(textForEmbedding);
-    
-    // Create the intelligence item with embedding
-    const item = createIntelligenceItem(
-      sourceType,
-      sourceId,
-      title,
-      content,
-      department,
-      tags,
-      metadata,
-      relevanceBoost,
-      embedding // Include embedding vector
-    );
-    
-    setIntelligenceIndex(prev => {
-      const newIndex = [item, ...prev];
-      // Use configurable cap instead of hardcoded 500
-      return newIndex.slice(0, intelligenceCap);
-    });
-    
-    return item;
-  }, [intelligenceCap]); // Add intelligenceCap as dependency
-
-  // ============================================
-  // ACTIVITY LOGGING (with intelligence integration)
-  // ============================================
+  // Activity logging with intelligence
   const logActivity = useCallback(async (text, type = 'general', department = null, user = 'You') => {
     const deptName = department || activeDepartment?.name || 'General';
     
     const activity = {
-      id: generateId('activity'),
+      id: `act_${Date.now()}`,
       text,
       type,
       department: deptName,
@@ -232,262 +191,376 @@ function App() {
     
     setActivities(prev => [activity, ...prev].slice(0, 100));
     
-    // Also add to intelligence with embedding
-    await addToIntelligence(
+    // Add to intelligence
+    const tags = await generateSmartTags(text, `Activity: ${type}`, 'activity_log');
+    const intellItem = createIntelligenceItem(
       'activity_log',
       activity.id,
-      `Activity: ${text}`,
-      `${user} performed action in ${deptName}: ${text}`,
+      `Activity: ${text.substring(0, 50)}`,
+      text,
       deptName,
-      null, // Let smart tags generate
+      [...tags, type, 'activity'],
       { user, activityType: type },
       1
     );
     
-    return activity;
-  }, [activeDepartment, addToIntelligence]);
+    addToIntelligence(intellItem);
+  }, [activeDepartment]);
 
-  // ============================================
-  // CONNECTED DOCS - AUTO REFRESH
-  // ============================================
+  // Add to intelligence with duplicate detection (Item 3)
+  const addToIntelligence = useCallback(async (item) => {
+    setIntelligenceIndex(prev => {
+      // Check for duplicates
+      const duplicateCheck = checkForDuplicate(item, prev);
+      
+      if (duplicateCheck.isDuplicate) {
+        console.log(`Duplicate detected (${Math.round(duplicateCheck.similarity * 100)}% similar), updating existing item`);
+        // Update existing item's timestamp instead of adding duplicate
+        return prev.map(existing => 
+          existing.id === duplicateCheck.existingItem.id
+            ? { ...existing, createdAt: new Date().toISOString(), relevanceBoost: Math.max(existing.relevanceBoost, item.relevanceBoost) }
+            : existing
+        );
+      }
+      
+      // No duplicate - add new item
+      const newIndex = [item, ...prev];
+      return newIndex.slice(0, intelligenceCap);
+    });
+  }, [intelligenceCap]);
+
+  // Handle department click
+  const handleDepartmentClick = (dept) => {
+    setActiveDepartment(dept);
+    setCurrentPage('chat');
+    setMobileMenuOpen(false);
+  };
+
+  // Navigate to chat with message from dashboard
+  const handleQuickChat = (message) => {
+    setPendingMessage(message);
+    if (!activeDepartment) {
+      setActiveDepartment(departments[0]);
+    }
+    setCurrentPage('chat');
+  };
+
+  // Clear conversation history for a department (Item 7)
+  const clearConversationHistory = useCallback((deptId) => {
+    setConversations(prev => {
+      const updated = { ...prev };
+      delete updated[deptId];
+      return updated;
+    });
+    logActivity('Cleared conversation history', 'system', activeDepartment?.name);
+  }, [activeDepartment, logActivity]);
+
+  // Fetch connected doc
   const fetchConnectedDoc = async (doc) => {
     try {
       const response = await fetch('/api/fetch-doc', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: doc.url })
+        body: JSON.stringify({ url: doc.url }),
       });
       
-      if (!response.ok) throw new Error('Fetch failed');
-      
-      const data = await response.json();
-      return {
-        ...doc,
-        content: data.content,
-        status: 'synced',
-        lastFetched: new Date().toISOString(),
-        error: null
-      };
-    } catch (error) {
-      return {
-        ...doc,
-        status: 'error',
-        error: error.message
-      };
+      if (response.ok) {
+        const data = await response.json();
+        return { ...doc, content: data.content, status: 'synced', lastFetched: new Date().toISOString(), error: null };
+      } else {
+        const error = await response.json();
+        return { ...doc, status: 'error', error: error.error || 'Failed to fetch' };
+      }
+    } catch (e) {
+      return { ...doc, status: 'error', error: 'Network error' };
     }
   };
 
+  // Refresh all connected docs
   const refreshAllDocs = async () => {
-    const updated = await Promise.all(
-      connectedDocs.map(doc => fetchConnectedDoc(doc))
-    );
+    const updated = await Promise.all(connectedDocs.map(fetchConnectedDoc));
     setConnectedDocs(updated);
   };
 
-  // Auto-refresh connected docs on load and every 5 minutes
+  // Auto-refresh docs on load and every 5 minutes
   useEffect(() => {
     if (connectedDocs.length > 0) {
       refreshAllDocs();
       const interval = setInterval(refreshAllDocs, 5 * 60 * 1000);
       return () => clearInterval(interval);
     }
-  }, []); // Only on mount
+  }, []);
 
-  // ============================================
-  // NAVIGATION
-  // ============================================
+  // Nav items
   const navItems = [
-    { id: 'dashboard', name: 'Dashboard', icon: LayoutDashboard },
-    { id: 'systems', name: 'Systems', icon: Settings },
-    { id: 'knowledge', name: 'Knowledge', icon: BookOpen },
-    { id: 'issues', name: 'Issues', icon: ClipboardList, badge: issues.filter(i => !i.archived && i.status !== 'Resolved').length },
-    { id: 'help', name: 'Help / FAQ', icon: HelpCircle },
+    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { id: 'systems', label: 'Systems', icon: Settings },
+    { id: 'knowledge', label: 'Knowledge', icon: BookOpen },
+    { id: 'issues', label: 'Issues', icon: ClipboardList, badge: issues.filter(i => !i.archived && i.status !== 'Resolved').length },
+    { id: 'help', label: 'Help', icon: HelpCircle },
   ];
 
-  const handleNavClick = (pageId) => {
-    setCurrentPage(pageId);
-    setActiveDepartment(null);
-  };
-
-  const handleDepartmentClick = (dept) => {
-    setActiveDepartment(dept);
-    setCurrentPage('chat');
-  };
-
-  // ============================================
-  // RENDER PAGE
-  // ============================================
+  // Render current page
   const renderPage = () => {
     const commonProps = {
+      logActivity,
       activeDepartment,
       departments,
       setDepartments,
-      conversations,
-      setConversations,
-      knowledge,
-      setKnowledge,
-      issues,
-      setIssues,
-      activities,
-      logActivity,
-      intelligenceIndex,
-      intelligenceCap, // NEW: Pass cap to pages
-      setIntelligenceCap, // NEW: Pass setter to pages
-      addToIntelligence,
-      queryIntelligence: queryIntelligenceWithEmbedding, // Use semantic-enhanced version
-      systemInstructions,
-      setSystemInstructions,
-      teamMembers,
-      setTeamMembers,
-      pendingInvites,
-      setPendingInvites,
-      connectedDocs,
-      setConnectedDocs,
-      fetchConnectedDoc,
-      refreshAllDocs,
-      setCurrentPage,
-      setActiveDepartment,
-      renderDeptIcon,
-      issueColumns,
-      setIssueColumns,
-      generateEmbedding, // Pass embedding function to pages
     };
 
     switch (currentPage) {
       case 'dashboard':
-        return <Dashboard {...commonProps} />;
+        return (
+          <Dashboard 
+            {...commonProps}
+            activities={activities}
+            issues={issues}
+            knowledge={knowledge}
+            intelligenceIndex={intelligenceIndex}
+            onNavigate={setCurrentPage}
+            onQuickChat={handleQuickChat}
+            setShowVoiceModal={setShowVoiceModal}
+          />
+        );
       case 'systems':
-        return <Systems {...commonProps} />;
+        return (
+          <Systems 
+            {...commonProps}
+            intelligenceIndex={intelligenceIndex}
+            intelligenceCap={intelligenceCap}
+            setIntelligenceCap={setIntelligenceCap}
+            teamMembers={teamMembers}
+            setTeamMembers={setTeamMembers}
+            pendingInvites={pendingInvites}
+            setPendingInvites={setPendingInvites}
+            systemInstructions={systemInstructions}
+            setSystemInstructions={setSystemInstructions}
+            connectedDocs={connectedDocs}
+            knowledgeGaps={knowledgeGaps}
+            refreshKnowledgeGaps={refreshKnowledgeGaps}
+            resolveKnowledgeGap={resolveKnowledgeGap}
+            deleteKnowledgeGap={deleteKnowledgeGap}
+            clearResolvedGaps={clearResolvedGaps}
+            getAnalyticsSummary={getAnalyticsSummary}
+            resetAnalytics={resetAnalytics}
+          />
+        );
       case 'knowledge':
-        return <Knowledge {...commonProps} />;
+        return (
+          <Knowledge 
+            {...commonProps}
+            knowledge={knowledge}
+            setKnowledge={setKnowledge}
+            addToIntelligence={addToIntelligence}
+            generateSmartTags={generateSmartTags}
+            connectedDocs={connectedDocs}
+            setConnectedDocs={setConnectedDocs}
+            fetchConnectedDoc={fetchConnectedDoc}
+            refreshAllDocs={refreshAllDocs}
+            trackDocConnected={trackDocConnected}
+            trackKnowledgeAdded={trackKnowledgeAdded}
+          />
+        );
       case 'issues':
-        return <Issues {...commonProps} />;
+        return (
+          <Issues 
+            {...commonProps}
+            issues={issues}
+            setIssues={setIssues}
+            issueColumns={issueColumns}
+            setIssueColumns={setIssueColumns}
+            addToIntelligence={addToIntelligence}
+            generateSmartTags={generateSmartTags}
+            trackIssueCreated={trackIssueCreated}
+            trackIssueResolved={trackIssueResolved}
+          />
+        );
       case 'help':
         return <Help />;
       case 'chat':
-        return <Chat {...commonProps} />;
+        return (
+          <Chat 
+            {...commonProps}
+            conversations={conversations}
+            setConversations={setConversations}
+            knowledge={knowledge}
+            connectedDocs={connectedDocs}
+            intelligenceIndex={intelligenceIndex}
+            systemInstructions={systemInstructions}
+            addToIntelligence={addToIntelligence}
+            generateSmartTags={generateSmartTags}
+            queryIntelligence={queryIntelligence}
+            issues={issues}
+            setIssues={setIssues}
+            pendingMessage={pendingMessage}
+            setPendingMessage={setPendingMessage}
+            clearConversationHistory={clearConversationHistory}
+            recordKnowledgeGap={recordKnowledgeGap}
+            trackChatMessage={trackChatMessage}
+            trackSearch={trackSearch}
+            trackIssueCreated={trackIssueCreated}
+          />
+        );
       default:
-        return <Dashboard {...commonProps} />;
+        return null;
     }
   };
 
-  // ============================================
-  // RENDER
-  // ============================================
   return (
-    <div style={{
-      minHeight: '100vh',
+    <div style={{ 
+      minHeight: '100vh', 
       background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)',
       display: 'flex',
       fontFamily: "'DM Sans', sans-serif",
     }}>
-      {/* Background Grid Pattern */}
+      {/* Mobile Header */}
       <div style={{
+        display: 'none',
         position: 'fixed',
-        inset: 0,
-        backgroundImage: `
-          linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
-          linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px)
-        `,
-        backgroundSize: '40px 40px',
-        pointerEvents: 'none',
-      }} />
+        top: 0,
+        left: 0,
+        right: 0,
+        height: 60,
+        background: 'rgba(15, 23, 42, 0.95)',
+        backdropFilter: 'blur(20px)',
+        borderBottom: '1px solid rgba(255,255,255,0.06)',
+        zIndex: 1000,
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '0 16px',
+      }} className="mobile-header">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ 
+            width: 36, height: 36, 
+            background: 'linear-gradient(135deg, #3B82F6, #8B5CF6)',
+            borderRadius: 10,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontWeight: 700, fontSize: 18, color: 'white',
+          }}>E</div>
+          <span style={{ fontWeight: 600, fontSize: 18, color: '#E2E8F0' }}>Empire AI</span>
+        </div>
+        <button onClick={() => setMobileMenuOpen(!mobileMenuOpen)} style={{
+          background: 'none', border: 'none', color: '#E2E8F0', cursor: 'pointer', padding: 8
+        }}>
+          {mobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
+        </button>
+      </div>
 
       {/* Sidebar */}
       <aside style={{
-        width: sidebarCollapsed ? 70 : 260,
-        backgroundColor: 'rgba(15, 23, 42, 0.95)',
+        width: sidebarCollapsed ? 72 : 260,
+        background: 'rgba(15, 23, 42, 0.6)',
+        backdropFilter: 'blur(20px)',
         borderRight: '1px solid rgba(255,255,255,0.06)',
         display: 'flex',
         flexDirection: 'column',
         transition: 'width 0.3s ease',
         position: 'relative',
-        zIndex: 10,
+        zIndex: 100,
       }}>
         {/* Logo */}
-        <div style={{
-          padding: '20px',
+        <div style={{ 
+          padding: sidebarCollapsed ? '20px 16px' : '20px 24px', 
           borderBottom: '1px solid rgba(255,255,255,0.06)',
           display: 'flex',
           alignItems: 'center',
           gap: 12,
         }}>
-          <div style={{
-            width: 36,
-            height: 36,
+          <div style={{ 
+            width: 40, height: 40, 
             background: 'linear-gradient(135deg, #3B82F6, #8B5CF6)',
-            borderRadius: 8,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontWeight: 700,
-            color: 'white',
-            fontSize: 18,
-          }}>
-            E
-          </div>
+            borderRadius: 12,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontWeight: 700, fontSize: 20, color: 'white',
+            flexShrink: 0,
+          }}>E</div>
           {!sidebarCollapsed && (
-            <span style={{ color: '#E2E8F0', fontWeight: 600, fontSize: 18 }}>
-              Empire AI
-            </span>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: 18, color: '#E2E8F0' }}>Empire AI</div>
+              <div style={{ fontSize: 11, color: '#64748B' }}>Operations Platform</div>
+            </div>
           )}
         </div>
 
-        {/* Navigation */}
-        <nav style={{ padding: '12px', flex: 1, overflowY: 'auto' }}>
+        {/* Nav Items */}
+        <nav style={{ flex: 1, padding: '16px 12px', overflowY: 'auto' }}>
           {navItems.map(item => (
             <button
               key={item.id}
-              onClick={() => handleNavClick(item.id)}
+              onClick={() => { setCurrentPage(item.id); setActiveDepartment(null); }}
               style={{
                 width: '100%',
                 display: 'flex',
                 alignItems: 'center',
                 gap: 12,
-                padding: '12px',
+                padding: sidebarCollapsed ? '12px' : '12px 16px',
                 marginBottom: 4,
-                borderRadius: 8,
+                background: currentPage === item.id ? 'rgba(59, 130, 246, 0.1)' : 'transparent',
                 border: 'none',
-                cursor: 'pointer',
-                backgroundColor: currentPage === item.id ? 'rgba(59, 130, 246, 0.2)' : 'transparent',
+                borderRadius: 10,
                 color: currentPage === item.id ? '#3B82F6' : '#94A3B8',
+                cursor: 'pointer',
                 transition: 'all 0.2s',
+                justifyContent: sidebarCollapsed ? 'center' : 'flex-start',
+                position: 'relative',
               }}
             >
               <item.icon size={20} />
-              {!sidebarCollapsed && (
-                <>
-                  <span style={{ flex: 1, textAlign: 'left' }}>{item.name}</span>
-                  {item.badge > 0 && (
-                    <span style={{
-                      backgroundColor: '#EF4444',
-                      color: 'white',
-                      fontSize: 11,
-                      padding: '2px 6px',
-                      borderRadius: 10,
-                      fontWeight: 600,
-                    }}>
-                      {item.badge}
-                    </span>
-                  )}
-                </>
+              {!sidebarCollapsed && <span style={{ fontSize: 14, fontWeight: 500 }}>{item.label}</span>}
+              {item.badge > 0 && (
+                <span style={{
+                  position: sidebarCollapsed ? 'absolute' : 'relative',
+                  top: sidebarCollapsed ? 4 : 'auto',
+                  right: sidebarCollapsed ? 4 : 'auto',
+                  marginLeft: sidebarCollapsed ? 0 : 'auto',
+                  background: '#EF4444',
+                  color: 'white',
+                  fontSize: 10,
+                  fontWeight: 600,
+                  padding: '2px 6px',
+                  borderRadius: 10,
+                  minWidth: 18,
+                  textAlign: 'center',
+                }}>{item.badge}</span>
               )}
             </button>
           ))}
 
+          {/* Voice Mode Button */}
+          <button
+            onClick={() => setShowVoiceModal(true)}
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 12,
+              padding: sidebarCollapsed ? '12px' : '12px 16px',
+              marginBottom: 4,
+              background: 'rgba(16, 185, 129, 0.1)',
+              border: '1px solid rgba(16, 185, 129, 0.2)',
+              borderRadius: 10,
+              color: '#10B981',
+              cursor: 'pointer',
+              justifyContent: sidebarCollapsed ? 'center' : 'flex-start',
+            }}
+          >
+            <Mic size={20} />
+            {!sidebarCollapsed && <span style={{ fontSize: 14, fontWeight: 500 }}>Voice Mode</span>}
+          </button>
+
           {/* Departments Section */}
           {!sidebarCollapsed && (
             <div style={{ marginTop: 24 }}>
-              <div style={{
-                color: '#64748B',
-                fontSize: 11,
-                fontWeight: 600,
+              <div style={{ 
+                fontSize: 11, 
+                fontWeight: 600, 
+                color: '#64748B', 
                 textTransform: 'uppercase',
-                letterSpacing: 1,
-                padding: '8px 12px',
-              }}>
-                Departments
-              </div>
+                letterSpacing: '0.05em',
+                padding: '0 16px',
+                marginBottom: 8,
+              }}>Departments</div>
               {departments.map(dept => (
                 <button
                   key={dept.id}
@@ -496,49 +569,34 @@ function App() {
                     width: '100%',
                     display: 'flex',
                     alignItems: 'center',
-                    gap: 10,
-                    padding: '10px 12px',
+                    gap: 12,
+                    padding: '10px 16px',
                     marginBottom: 2,
-                    borderRadius: 8,
+                    background: activeDepartment?.id === dept.id ? 'rgba(59, 130, 246, 0.1)' : 'transparent',
                     border: 'none',
+                    borderRadius: 8,
+                    color: activeDepartment?.id === dept.id ? '#3B82F6' : '#94A3B8',
                     cursor: 'pointer',
-                    backgroundColor: activeDepartment?.id === dept.id ? 'rgba(59, 130, 246, 0.15)' : 'transparent',
-                    color: activeDepartment?.id === dept.id ? '#E2E8F0' : '#94A3B8',
-                    transition: 'all 0.2s',
+                    textAlign: 'left',
                   }}
                 >
-                  <span style={{ color: dept.color }}>{renderDeptIcon(dept.icon, 18)}</span>
-                  <span style={{ fontSize: 13, textAlign: 'left' }}>{dept.name}</span>
+                  <span style={{ 
+                    width: 28, height: 28, 
+                    background: `${dept.color}20`,
+                    borderRadius: 6,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    color: dept.color,
+                  }}>
+                    {renderDeptIcon(dept.icon, 14)}
+                  </span>
+                  <span style={{ fontSize: 13, fontWeight: 500, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {dept.name}
+                  </span>
                 </button>
               ))}
             </div>
           )}
         </nav>
-
-        {/* Voice Mode Button */}
-        <div style={{ padding: 12, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-          <button
-            onClick={() => setShowVoiceModal(true)}
-            style={{
-              width: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 8,
-              padding: '12px',
-              borderRadius: 8,
-              border: 'none',
-              cursor: 'pointer',
-              background: 'linear-gradient(135deg, #10B981, #059669)',
-              color: 'white',
-              fontWeight: 600,
-              transition: 'transform 0.2s',
-            }}
-          >
-            <Mic size={18} />
-            {!sidebarCollapsed && 'Voice Mode'}
-          </button>
-        </div>
 
         {/* Collapse Toggle */}
         <button
@@ -550,9 +608,9 @@ function App() {
             transform: 'translateY(-50%)',
             width: 24,
             height: 24,
-            borderRadius: '50%',
+            background: '#1E293B',
             border: '1px solid rgba(255,255,255,0.1)',
-            backgroundColor: '#1E293B',
+            borderRadius: '50%',
             color: '#94A3B8',
             cursor: 'pointer',
             display: 'flex',
@@ -565,18 +623,22 @@ function App() {
       </aside>
 
       {/* Main Content */}
-      <main style={{ flex: 1, overflow: 'auto', position: 'relative' }}>
+      <main style={{ 
+        flex: 1, 
+        overflow: 'auto',
+        padding: 24,
+      }}>
         {renderPage()}
       </main>
 
       {/* Voice Modal */}
       {showVoiceModal && (
-        <VoiceModal
+        <VoiceModal 
           onClose={() => setShowVoiceModal(false)}
-          activeDepartment={activeDepartment}
+          activeDepartment={activeDepartment || departments[0]}
           systemInstructions={systemInstructions}
           intelligenceIndex={intelligenceIndex}
-          queryIntelligence={queryIntelligenceWithEmbedding}
+          queryIntelligence={queryIntelligence}
           knowledge={knowledge}
           connectedDocs={connectedDocs}
           issues={issues}
@@ -584,61 +646,93 @@ function App() {
           departments={departments}
           logActivity={logActivity}
           addToIntelligence={addToIntelligence}
-          generateEmbedding={generateEmbedding}
+          recordKnowledgeGap={recordKnowledgeGap}
+          trackVoiceSession={trackVoiceSession}
+          trackSearch={trackSearch}
+          trackIssueCreated={trackIssueCreated}
         />
       )}
 
-      {/* Global Styles */}
+      {/* Mobile Menu Overlay */}
+      {mobileMenuOpen && (
+        <div style={{
+          position: 'fixed',
+          top: 60,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(15, 23, 42, 0.98)',
+          zIndex: 999,
+          padding: 20,
+          overflowY: 'auto',
+        }}>
+          {navItems.map(item => (
+            <button
+              key={item.id}
+              onClick={() => { setCurrentPage(item.id); setActiveDepartment(null); setMobileMenuOpen(false); }}
+              style={{
+                width: '100%',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 16,
+                padding: '16px 20px',
+                marginBottom: 8,
+                background: currentPage === item.id ? 'rgba(59, 130, 246, 0.1)' : 'transparent',
+                border: 'none',
+                borderRadius: 12,
+                color: currentPage === item.id ? '#3B82F6' : '#E2E8F0',
+                cursor: 'pointer',
+              }}
+            >
+              <item.icon size={22} />
+              <span style={{ fontSize: 16, fontWeight: 500 }}>{item.label}</span>
+            </button>
+          ))}
+          
+          <div style={{ marginTop: 24, borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: 24 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: '#64748B', marginBottom: 12 }}>DEPARTMENTS</div>
+            {departments.map(dept => (
+              <button
+                key={dept.id}
+                onClick={() => handleDepartmentClick(dept)}
+                style={{
+                  width: '100%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
+                  padding: '14px 16px',
+                  marginBottom: 4,
+                  background: activeDepartment?.id === dept.id ? 'rgba(59, 130, 246, 0.1)' : 'transparent',
+                  border: 'none',
+                  borderRadius: 10,
+                  color: activeDepartment?.id === dept.id ? '#3B82F6' : '#E2E8F0',
+                  cursor: 'pointer',
+                }}
+              >
+                <span style={{ color: dept.color }}>{renderDeptIcon(dept.icon, 18)}</span>
+                <span style={{ fontSize: 15 }}>{dept.name}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Mono&display=swap');
         
-        * {
-          box-sizing: border-box;
-          margin: 0;
-          padding: 0;
-        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
         
-        ::-webkit-scrollbar {
-          width: 6px;
-        }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
         
-        ::-webkit-scrollbar-track {
-          background: rgba(255,255,255,0.05);
-        }
-        
-        ::-webkit-scrollbar-thumb {
-          background: rgba(255,255,255,0.1);
-          border-radius: 3px;
-        }
-        
-        ::-webkit-scrollbar-thumb:hover {
-          background: rgba(255,255,255,0.2);
-        }
-        
-        @keyframes pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.5; }
-        }
-        
-        @keyframes spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-        
-        .thinking-dots span {
-          animation: thinking 1.4s infinite ease-in-out both;
-        }
-        
-        .thinking-dots span:nth-child(1) { animation-delay: -0.32s; }
-        .thinking-dots span:nth-child(2) { animation-delay: -0.16s; }
-        
-        @keyframes thinking {
-          0%, 80%, 100% { transform: scale(0); opacity: 0.5; }
-          40% { transform: scale(1); opacity: 1; }
+        @media (max-width: 768px) {
+          .mobile-header { display: flex !important; }
+          aside { display: none !important; }
+          main { padding-top: 76px !important; }
         }
       `}</style>
     </div>
   );
 }
-
-export default App;
