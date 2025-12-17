@@ -1,5 +1,5 @@
 // Empire AI - Utility Functions
-// Version 3.0 - With Duplicate Detection, Knowledge Gaps, Analytics
+// Version 3.1 - With Chat Logs Support
 
 // ============ STORAGE KEYS ============
 export const STORAGE_KEYS = {
@@ -18,6 +18,7 @@ export const STORAGE_KEYS = {
   EMBEDDING_CACHE: 'empire_embeddingCache',
   KNOWLEDGE_GAPS: 'empire_knowledgeGaps',
   ANALYTICS: 'empire_analytics',
+  CHAT_LOGS: 'empire_chatLogs',
 };
 
 // ============ INTELLIGENCE CONFIG ============
@@ -45,6 +46,12 @@ export const KNOWLEDGE_GAPS_CONFIG = {
 // ============ ANALYTICS CONFIG ============
 export const ANALYTICS_CONFIG = {
   RETENTION_DAYS: 90,  // Keep analytics for 90 days
+};
+
+// ============ CHAT LOGS CONFIG ============
+export const CHAT_LOGS_CONFIG = {
+  MAX_LOGS: 50,           // Maximum logs to store across all departments
+  MAX_LOGS_PER_DEPT: 20,  // Maximum logs per department
 };
 
 // ============ TAG SYNONYMS ============
@@ -581,6 +588,7 @@ export const getSourceLabel = (sourceType) => {
     'voice_interaction': 'Voice Chat',
     'activity_log': 'Activity',
     'google_doc': 'Google Doc',
+    'chat_log': 'Saved Chat',
   };
   return labels[sourceType] || sourceType;
 };
