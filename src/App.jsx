@@ -1,5 +1,5 @@
 // Empire AI - Main Application Shell
-// Version 3.0 - With Duplicate Detection, Knowledge Gaps, Analytics
+// Version 3.1 - With Chat Logs Support
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { 
@@ -105,6 +105,11 @@ export default function App() {
     loadFromStorage(STORAGE_KEYS.ISSUE_COLUMNS, DEFAULT_COLUMNS)
   );
   
+  // Chat logs state (NEW)
+  const [chatLogs, setChatLogs] = useState(() => 
+    loadFromStorage(STORAGE_KEYS.CHAT_LOGS, [])
+  );
+  
   // Intelligence state
   const [intelligenceIndex, setIntelligenceIndex] = useState(() => 
     loadFromStorage(STORAGE_KEYS.INTELLIGENCE, [])
@@ -146,6 +151,7 @@ export default function App() {
   useEffect(() => { saveToStorage(STORAGE_KEYS.ACTIVITIES, activities); }, [activities]);
   useEffect(() => { saveToStorage(STORAGE_KEYS.ISSUES, issues); }, [issues]);
   useEffect(() => { saveToStorage(STORAGE_KEYS.ISSUE_COLUMNS, issueColumns); }, [issueColumns]);
+  useEffect(() => { saveToStorage(STORAGE_KEYS.CHAT_LOGS, chatLogs); }, [chatLogs]); // NEW
   useEffect(() => { saveToStorage(STORAGE_KEYS.INTELLIGENCE, intelligenceIndex); }, [intelligenceIndex]);
   useEffect(() => { saveToStorage(STORAGE_KEYS.INTELLIGENCE_CAP, intelligenceCap); }, [intelligenceCap]);
   useEffect(() => { saveToStorage(STORAGE_KEYS.TEAM_MEMBERS, teamMembers); }, [teamMembers]);
@@ -400,6 +406,8 @@ export default function App() {
             trackChatMessage={trackChatMessage}
             trackSearch={trackSearch}
             trackIssueCreated={trackIssueCreated}
+            chatLogs={chatLogs}
+            setChatLogs={setChatLogs}
           />
         );
       default:
