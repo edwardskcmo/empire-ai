@@ -1,13 +1,15 @@
 // Empire AI - Chat Interface
-// Version 3.0 - With Conversation Memory, Knowledge Gaps, Analytics
+// Version 3.1 - With Department Chat Logs
 
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   Send, Loader2, Sparkles, Building, Globe, Trash2, 
-  RotateCcw, MessageSquare, Clock, FileText, Database
+  MessageSquare, Clock, FileText, Database, Plus,
+  ChevronDown, ChevronUp, User, Calendar
 } from 'lucide-react';
 import { 
   formatTimestamp, 
+  formatDate,
   createIntelligenceItem,
   getCachedEmbedding,
   setCachedEmbedding,
@@ -39,29 +41,35 @@ export default function Chat({
   trackChatMessage,
   trackSearch,
   trackIssueCreated,
+  chatLogs,
+  setChatLogs,
 }) {
   const [input, setInput] = useState('');
   const [isThinking, setIsThinking] = useState(false);
   const [searchAllDepts, setSearchAllDepts] = useState(false);
-  const [ragStatus, setRagStatus] = useState(null); // 'cached', 'fresh', null
+  const [ragStatus, setRagStatus] = useState(null);
   const [topScore, setTopScore] = useState(0);
   const [showMemoryIndicator, setShowMemoryIndicator] = useState(false);
   const [notification, setNotification] = useState(null);
+  const [showChatLogs, setShowChatLogs] = useState(true);
+  const [expandedLog, setExpandedLog] = useState(null);
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
 
   const deptId = activeDepartment?.id || 'general';
   const messages = conversations[deptId] || [];
   const deptInstructions = activeDepartment?.instructions || '';
+  
+  // Get chat logs for current department
+  const departmentChatLogs = (chatLogs || []).filter(log => log.departmentId === deptId);
 
-  // Check if this is a returning session (Item 7)
+  // Check if this is a returning session
   useEffect(() => {
     if (messages.length > 0) {
       const lastMessage = messages[messages.length - 1];
       const lastMessageTime = new Date(lastMessage.timestamp);
       const hoursSince = (Date.now() - lastMessageTime.getTime()) / (1000 * 60 * 60);
       
-      // Show indicator if last message was more than 1 hour ago
       if (hoursSince > 1) {
         setShowMemoryIndicator(true);
         setTimeout(() => setShowMemoryIndicator(false), 5000);
@@ -83,13 +91,81 @@ export default function Chat({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isThinking]);
 
+  // Generate chat summary from messages
+  const generateChatSummary = (msgs) => {
+    if (!msgs || msgs.length === 0) return 'Empty conversation';
+    
+    // Get first user message as primary topic
+    const firstUserMsg = msgs.find(m => m.role === 'user');
+    if (!firstUserMsg) return 'Conversation';
+    
+    // Truncate to reasonable length
+    const summary = firstUserMsg.content.substring(0, 80);
+    return summary.length < firstUserMsg.content.length ? summary + '...' : summary;
+  };
+
+  // Extract tags from conversation
+  const extractConversationTags = (msgs) => {
+    const tags = [];
+    const content = msgs.map(m => m.content).join(' ').toLowerCase();
+    
+    // Common business tags
+    const tagPatterns = [
+      'budget', 'schedule', 'permit', 'client', 'project', 'issue',
+      'deadline', 'material', 'subcontractor', 'payment', 'safety',
+      'estimate', 'proposal', 'contract', 'inspection', 'delay'
+    ];
+    
+    tagPatterns.forEach(tag => {
+      if (content.includes(tag)) tags.push(tag);
+    });
+    
+    return tags.slice(0, 3); // Max 3 tags
+  };
+
+  // Save current conversation to logs and start new chat
+  const startNewChat = () => {
+    if (messages.length < 2) {
+      // Not enough for a meaningful log, just clear
+      clearConversationHistory(deptId);
+      return;
+    }
+    
+    // Create chat log entry
+    const newLog = {
+      id: `chatlog_${Date.now()}`,
+      departmentId: deptId,
+      departmentName: activeDepartment?.name || 'General',
+      departmentColor: activeDepartment?.color || '#3B82F6',
+      summary: generateChatSummary(messages),
+      tags: extractConversationTags(messages),
+      messageCount: messages.length,
+      messages: messages, // Store full conversation for expansion
+      user: 'You',
+      createdAt: messages[0]?.timestamp || new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+    };
+    
+    // Add to chat logs
+    setChatLogs(prev => [newLog, ...(prev || [])].slice(0, 50)); // Keep last 50 logs total
+    
+    // Log activity
+    logActivity(`Completed chat: ${newLog.summary.substring(0, 40)}...`, 'chat', activeDepartment?.name);
+    
+    // Clear current conversation
+    clearConversationHistory(deptId);
+    
+    // Show notification
+    setNotification('Chat saved to history');
+    setTimeout(() => setNotification(null), 3000);
+  };
+
   // Build knowledge context with full data access
   const buildKnowledgeContext = async (query) => {
     let context = '';
     let cacheHit = false;
     let maxScore = 0;
     
-    // Semantic search with embeddings
     try {
       let queryEmbedding = getCachedEmbedding(query);
       
@@ -111,7 +187,6 @@ export default function Chat({
         }
       }
       
-      // Track the search
       trackSearch(cacheHit);
       
     } catch (e) {
@@ -119,7 +194,6 @@ export default function Chat({
       setRagStatus(null);
     }
     
-    // Query intelligence (keyword fallback if no embeddings)
     const searchDept = searchAllDepts ? null : activeDepartment?.name;
     const relevantItems = queryIntelligence(intelligenceIndex, query, searchDept, 10);
     
@@ -136,7 +210,6 @@ export default function Chat({
       });
     }
     
-    // Add connected Google Sheets/Docs (full content)
     const syncedDocs = connectedDocs.filter(d => d.status === 'synced' && d.content);
     if (syncedDocs.length > 0) {
       context += '\n\n=== CONNECTED SPREADSHEETS & DOCUMENTS ===\n';
@@ -146,7 +219,6 @@ export default function Chat({
       });
     }
 
-    // Add active issues context
     const activeIssues = issues.filter(i => !i.archived && i.status !== 'Resolved');
     if (activeIssues.length > 0) {
       context += '\n\n=== ISSUES BOARD (Active Issues) ===\n';
@@ -157,7 +229,6 @@ export default function Chat({
       });
     }
     
-    // Add resolved issues for reference
     const resolvedIssues = issues.filter(i => i.status === 'Resolved' || i.archived).slice(0, 10);
     if (resolvedIssues.length > 0) {
       context += '\n\n=== RESOLVED/ARCHIVED ISSUES ===\n';
@@ -211,7 +282,6 @@ export default function Chat({
     logActivity(`Created issue: ${newIssue.title}`, 'issue', newIssue.department);
     trackIssueCreated(newIssue.priority, newIssue.department);
     
-    // Add to intelligence
     const tags = await generateSmartTags(newIssue.description, newIssue.title, 'issue_created');
     addToIntelligence(createIntelligenceItem(
       'issue_created',
@@ -230,7 +300,6 @@ export default function Chat({
     return newIssue;
   };
 
-  // Clean response for display (remove markers)
   const cleanResponseForDisplay = (response) => {
     return response.replace(/\[ISSUE_CREATED\][\s\S]*?\[\/ISSUE_CREATED\]/gi, '').trim();
   };
@@ -242,7 +311,6 @@ export default function Chat({
     const userMessage = input.trim();
     setInput('');
     
-    // Add user message
     const newMessages = [...messages, { 
       role: 'user', 
       content: userMessage, 
@@ -254,10 +322,7 @@ export default function Chat({
     setRagStatus(null);
     
     try {
-      // Build context
       const { context, maxScore } = await buildKnowledgeContext(userMessage);
-      
-      // Build system prompt with conversation summary for context (Item 7)
       const conversationSummary = getConversationSummary(messages);
       
       let systemPrompt = `You are Empire AI, the operational intelligence assistant for Empire Remodeling.
@@ -276,7 +341,6 @@ Then confirm the issue was created.
 
 Be helpful, specific, and reference the company knowledge when relevant.`;
 
-      // Get recent messages for context (trimmed for API limits)
       const recentMessages = trimConversationHistory(newMessages).slice(-10).map(m => ({
         role: m.role,
         content: m.content
@@ -300,19 +364,16 @@ Be helpful, specific, and reference the company knowledge when relevant.`;
         aiContent = "I'm having trouble connecting to my brain right now. Please try again in a moment.";
       }
       
-      // Check for issue creation
       const issueData = parseIssueFromResponse(aiContent);
       if (issueData) {
         await createIssue(issueData);
         aiContent = cleanResponseForDisplay(aiContent);
       }
       
-      // Track knowledge gap if low relevance (Item 8)
       if (maxScore < KNOWLEDGE_GAPS_CONFIG.LOW_RELEVANCE_THRESHOLD && userMessage.length >= KNOWLEDGE_GAPS_CONFIG.MIN_QUERY_LENGTH) {
         recordKnowledgeGap(userMessage, maxScore, activeDepartment?.name || 'General');
       }
 
-      // Add AI response
       const finalMessages = [...newMessages, { 
         role: 'assistant', 
         content: aiContent, 
@@ -321,14 +382,11 @@ Be helpful, specific, and reference the company knowledge when relevant.`;
         topScore: maxScore,
       }];
       
-      // Trim to memory limit and save (Item 7)
       const trimmedMessages = trimConversationHistory(finalMessages);
       setConversations(prev => ({ ...prev, [deptId]: trimmedMessages }));
       
-      // Track analytics
       trackChatMessage(activeDepartment?.name || 'General');
       
-      // Log to intelligence
       const tags = await generateSmartTags(userMessage, 'Chat Query', 'chat_query');
       addToIntelligence(createIntelligenceItem(
         'chat_query',
@@ -352,6 +410,11 @@ Be helpful, specific, and reference the company knowledge when relevant.`;
     }
     
     setIsThinking(false);
+  };
+
+  // Delete a chat log
+  const deleteChatLog = (logId) => {
+    setChatLogs(prev => (prev || []).filter(log => log.id !== logId));
   };
 
   return (
@@ -426,7 +489,7 @@ Be helpful, specific, and reference the company knowledge when relevant.`;
             </span>
           )}
           
-          {/* Department Toggle (Item 5) */}
+          {/* Department Toggle */}
           <button
             onClick={() => setSearchAllDepts(!searchAllDepts)}
             style={{
@@ -447,11 +510,35 @@ Be helpful, specific, and reference the company knowledge when relevant.`;
             {searchAllDepts ? 'All Depts' : 'This Dept'}
           </button>
           
-          {/* Clear History Button (Item 7) */}
+          {/* New Chat Button */}
+          {messages.length > 0 && (
+            <button
+              onClick={startNewChat}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '8px 14px',
+                background: 'rgba(16, 185, 129, 0.1)',
+                border: '1px solid rgba(16, 185, 129, 0.3)',
+                borderRadius: 20,
+                color: '#10B981',
+                cursor: 'pointer',
+                fontSize: 12,
+                fontWeight: 500,
+              }}
+              title="Save current chat and start new"
+            >
+              <Plus size={14} />
+              New Chat
+            </button>
+          )}
+          
+          {/* Clear History Button */}
           {messages.length > 0 && (
             <button
               onClick={() => {
-                if (confirm('Clear conversation history for this department?')) {
+                if (confirm('Clear conversation without saving?')) {
                   clearConversationHistory(deptId);
                 }
               }}
@@ -467,7 +554,7 @@ Be helpful, specific, and reference the company knowledge when relevant.`;
                 cursor: 'pointer',
                 fontSize: 12,
               }}
-              title="Clear conversation history"
+              title="Clear without saving"
             >
               <Trash2 size={14} />
             </button>
@@ -475,7 +562,7 @@ Be helpful, specific, and reference the company knowledge when relevant.`;
         </div>
       </div>
       
-      {/* Conversation Memory Indicator (Item 7) */}
+      {/* Conversation Memory Indicator */}
       {showMemoryIndicator && messages.length > 0 && (
         <div style={{
           background: 'rgba(59, 130, 246, 0.1)',
@@ -504,6 +591,7 @@ Be helpful, specific, and reference the company knowledge when relevant.`;
         flex: 1,
         overflowY: 'auto',
         padding: '0 8px',
+        minHeight: 200,
       }}>
         {messages.length === 0 ? (
           <div style={{
@@ -655,7 +743,7 @@ Be helpful, specific, and reference the company knowledge when relevant.`;
           </button>
         </div>
         
-        {/* Message Count Indicator (Item 7) */}
+        {/* Message Count Indicator */}
         <div style={{ 
           display: 'flex', 
           justifyContent: 'space-between', 
@@ -673,6 +761,209 @@ Be helpful, specific, and reference the company knowledge when relevant.`;
           )}
         </div>
       </div>
+      
+      {/* Chat History Section */}
+      {departmentChatLogs.length > 0 && (
+        <div style={{
+          marginTop: 16,
+          background: 'rgba(30, 41, 59, 0.5)',
+          borderRadius: 16,
+          border: '1px solid rgba(255,255,255,0.06)',
+          overflow: 'hidden',
+        }}>
+          {/* Header */}
+          <button
+            onClick={() => setShowChatLogs(!showChatLogs)}
+            style={{
+              width: '100%',
+              padding: '14px 20px',
+              background: 'rgba(30, 41, 59, 0.8)',
+              border: 'none',
+              borderBottom: showChatLogs ? '1px solid rgba(255,255,255,0.06)' : 'none',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <Clock size={18} style={{ color: '#8B5CF6' }} />
+              <span style={{ fontSize: 14, fontWeight: 600, color: '#E2E8F0' }}>
+                Recent Chats
+              </span>
+              <span style={{
+                padding: '2px 8px',
+                background: 'rgba(139, 92, 246, 0.2)',
+                borderRadius: 10,
+                fontSize: 12,
+                color: '#8B5CF6',
+              }}>
+                {departmentChatLogs.length}
+              </span>
+            </div>
+            {showChatLogs ? <ChevronUp size={18} color="#64748B" /> : <ChevronDown size={18} color="#64748B" />}
+          </button>
+          
+          {/* Chat Logs List */}
+          {showChatLogs && (
+            <div style={{ maxHeight: 300, overflowY: 'auto' }}>
+              {departmentChatLogs.map((log) => (
+                <div key={log.id}>
+                  {/* Log Entry */}
+                  <div
+                    onClick={() => setExpandedLog(expandedLog === log.id ? null : log.id)}
+                    style={{
+                      padding: '14px 20px',
+                      borderBottom: '1px solid rgba(255,255,255,0.04)',
+                      cursor: 'pointer',
+                      transition: 'background 0.2s',
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.02)'}
+                    onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                  >
+                    {/* Top Row: User, Department, Time */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                      <span style={{ 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        gap: 4,
+                        color: '#3B82F6', 
+                        fontSize: 13, 
+                        fontWeight: 500 
+                      }}>
+                        <User size={14} />
+                        {log.user}
+                      </span>
+                      <span style={{ color: '#64748B', fontSize: 12 }}>•</span>
+                      <span style={{
+                        padding: '2px 8px',
+                        background: `${log.departmentColor}20`,
+                        border: `1px solid ${log.departmentColor}40`,
+                        borderRadius: 6,
+                        fontSize: 11,
+                        color: log.departmentColor,
+                        fontWeight: 500,
+                      }}>
+                        {log.departmentName?.split(' ')[0] || 'General'}
+                      </span>
+                      <span style={{ marginLeft: 'auto', fontSize: 11, color: '#64748B' }}>
+                        {formatDate(log.completedAt)}
+                      </span>
+                    </div>
+                    
+                    {/* Summary */}
+                    <div style={{ 
+                      fontSize: 13, 
+                      color: '#E2E8F0', 
+                      marginBottom: 8,
+                      lineHeight: 1.4,
+                    }}>
+                      {log.summary}
+                    </div>
+                    
+                    {/* Tags & Message Count */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      {log.tags?.map((tag, i) => (
+                        <span
+                          key={i}
+                          style={{
+                            padding: '2px 8px',
+                            background: 'rgba(139, 92, 246, 0.1)',
+                            border: '1px solid rgba(139, 92, 246, 0.2)',
+                            borderRadius: 6,
+                            fontSize: 10,
+                            color: '#A78BFA',
+                          }}
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                      <span style={{ 
+                        marginLeft: 'auto', 
+                        fontSize: 11, 
+                        color: '#64748B',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 4,
+                      }}>
+                        <MessageSquare size={12} />
+                        {log.messageCount} messages
+                        {expandedLog === log.id ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                      </span>
+                    </div>
+                  </div>
+                  
+                  {/* Expanded Messages */}
+                  {expandedLog === log.id && (
+                    <div style={{
+                      background: 'rgba(15, 23, 42, 0.5)',
+                      padding: '12px 20px',
+                      borderBottom: '1px solid rgba(255,255,255,0.06)',
+                    }}>
+                      <div style={{ maxHeight: 200, overflowY: 'auto' }}>
+                        {log.messages?.map((msg, idx) => (
+                          <div
+                            key={idx}
+                            style={{
+                              padding: '8px 12px',
+                              marginBottom: 8,
+                              borderRadius: 8,
+                              background: msg.role === 'user' 
+                                ? 'rgba(59, 130, 246, 0.1)' 
+                                : 'rgba(255,255,255,0.03)',
+                              borderLeft: `3px solid ${msg.role === 'user' ? '#3B82F6' : '#64748B'}`,
+                            }}
+                          >
+                            <div style={{ 
+                              fontSize: 10, 
+                              color: msg.role === 'user' ? '#3B82F6' : '#8B5CF6',
+                              marginBottom: 4,
+                              fontWeight: 500,
+                            }}>
+                              {msg.role === 'user' ? 'You' : 'Empire AI'}
+                            </div>
+                            <div style={{ 
+                              fontSize: 12, 
+                              color: '#CBD5E1',
+                              lineHeight: 1.4,
+                            }}>
+                              {msg.content.substring(0, 200)}{msg.content.length > 200 ? '...' : ''}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (confirm('Delete this chat from history?')) {
+                            deleteChatLog(log.id);
+                          }
+                        }}
+                        style={{
+                          marginTop: 8,
+                          padding: '6px 12px',
+                          background: 'rgba(239, 68, 68, 0.1)',
+                          border: '1px solid rgba(239, 68, 68, 0.2)',
+                          borderRadius: 6,
+                          color: '#EF4444',
+                          fontSize: 11,
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 6,
+                        }}
+                      >
+                        <Trash2 size={12} />
+                        Delete from history
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       
       {/* Notification Toast */}
       {notification && (
