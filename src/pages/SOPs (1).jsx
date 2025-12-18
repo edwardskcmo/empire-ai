@@ -2,7 +2,8 @@ import React, { useState, useRef } from 'react';
 import { 
   FileText, Plus, Sparkles, ChevronRight, ChevronDown, Check, 
   Trash2, Edit3, Save, X, GripVertical, Loader, ArrowLeft,
-  Search, Filter, BookOpen, Lightbulb, List, PlusCircle, MinusCircle
+  Search, Filter, BookOpen, Lightbulb, List, PlusCircle, MinusCircle,
+  Upload, ClipboardPaste, FileUp, FileSpreadsheet, File
 } from 'lucide-react';
 
 export default function SOPs({ 
@@ -15,9 +16,18 @@ export default function SOPs({
   addToIntelligence 
 }) {
   // View state
-  const [view, setView] = useState('library'); // 'library' | 'builder' | 'editor'
+  const [view, setView] = useState('library'); // 'library' | 'builder' | 'editor' | 'import'
   const [searchQuery, setSearchQuery] = useState('');
   const [filterDept, setFilterDept] = useState('all');
+  
+  // Import state
+  const [importMethod, setImportMethod] = useState('paste'); // 'paste' | 'upload'
+  const [pasteContent, setPasteContent] = useState('');
+  const [importDept, setImportDept] = useState('');
+  const [isParsingImport, setIsParsingImport] = useState(false);
+  const [uploadedFileName, setUploadedFileName] = useState('');
+  const [uploadedFileContent, setUploadedFileContent] = useState('');
+  const fileInputRef = useRef(null);
   
   // Builder state
   const [builderStage, setBuilderStage] = useState(1); // 1-4
@@ -269,6 +279,164 @@ Create 5-10 steps, each with 2-5 bullet points for details. No other text, just 
     setAnswers({});
     setCurrentSOP(null);
     setExpandedSteps({});
+  };
+
+  // Reset import
+  const resetImport = () => {
+    setPasteContent('');
+    setImportDept('');
+    setUploadedFileName('');
+    setUploadedFileContent('');
+    setImportMethod('paste');
+  };
+
+  // Handle file upload
+  const handleFileUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    setUploadedFileName(file.name);
+    
+    const extension = file.name.split('.').pop()?.toLowerCase();
+    
+    try {
+      if (extension === 'txt' || extension === 'md') {
+        // Plain text files
+        const text = await file.text();
+        setUploadedFileContent(text);
+      } else if (extension === 'csv') {
+        // CSV files
+        const text = await file.text();
+        // Convert CSV to readable format
+        const lines = text.split('\n');
+        const formatted = lines.map(line => {
+          const cols = line.split(',').map(c => c.trim().replace(/^"|"$/g, ''));
+          return cols.join(' | ');
+        }).join('\n');
+        setUploadedFileContent(formatted);
+      } else if (extension === 'json') {
+        // JSON files
+        const text = await file.text();
+        try {
+          const parsed = JSON.parse(text);
+          setUploadedFileContent(JSON.stringify(parsed, null, 2));
+        } catch {
+          setUploadedFileContent(text);
+        }
+      } else {
+        // For other files, try to read as text
+        const text = await file.text();
+        setUploadedFileContent(text);
+      }
+    } catch (error) {
+      console.error('Error reading file:', error);
+      setUploadedFileContent('');
+      setUploadedFileName('');
+      alert('Could not read file. Please try a different format or paste the content directly.');
+    }
+    
+    // Reset file input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  // Parse imported content with AI
+  const parseImportedContent = async () => {
+    const content = importMethod === 'paste' ? pasteContent : uploadedFileContent;
+    if (!content.trim() || !importDept) return;
+    
+    setIsParsingImport(true);
+    try {
+      const dept = departments.find(d => d.id === importDept);
+      
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: `Convert this existing SOP/procedure content into a structured format.
+
+ORIGINAL CONTENT:
+${content}
+
+Analyze this content and convert it into a well-structured SOP. Extract:
+1. A clear, concise title
+2. A brief description/overview (1-2 sentences)
+3. Numbered steps with bullet point details under each step
+
+Return ONLY a JSON object with this exact format:
+{
+  "title": "Clear SOP title",
+  "description": "Brief overview of what this procedure accomplishes",
+  "steps": [
+    {
+      "title": "Step 1 Title (action-oriented)",
+      "bullets": ["Specific detail 1", "Specific detail 2", "Specific detail 3"]
+    },
+    {
+      "title": "Step 2 Title",
+      "bullets": ["Detail 1", "Detail 2"]
+    }
+  ]
+}
+
+Guidelines:
+- Each step title should be a clear action (e.g., "Prepare Materials", "Contact Customer", "Complete Inspection")
+- Bullets should be specific, actionable details
+- Include 2-5 bullets per step
+- Create 3-15 steps depending on complexity
+- Preserve all important information from the original
+- Clean up formatting and make it professional
+
+Return ONLY the JSON, no other text.`,
+          systemPrompt: 'You are an SOP expert. Parse and structure procedures into clean, professional formats. Return only valid JSON.',
+          conversationHistory: []
+        })
+      });
+      
+      const data = await response.json();
+      let parsed = null;
+      
+      try {
+        const jsonMatch = data.response.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          parsed = JSON.parse(jsonMatch[0]);
+        }
+      } catch {
+        // Fallback structure
+        parsed = {
+          title: "Imported Procedure",
+          description: "Procedure imported from external source",
+          steps: [
+            { title: "Review imported content", bullets: ["Original content could not be fully parsed", "Please edit manually to organize steps"] }
+          ]
+        };
+      }
+      
+      // Create the SOP object
+      setCurrentSOP({
+        id: `sop_${Date.now()}`,
+        ...parsed,
+        departmentId: importDept,
+        departmentName: dept?.name || 'General',
+        createdAt: new Date().toISOString(),
+        importedFrom: importMethod === 'upload' ? uploadedFileName : 'pasted content'
+      });
+      
+      // Expand all steps
+      const expanded = {};
+      parsed.steps?.forEach((_, i) => expanded[i] = true);
+      setExpandedSteps(expanded);
+      
+      // Switch to editor view
+      setView('editor');
+      resetImport();
+      
+    } catch (error) {
+      console.error('Error parsing import:', error);
+      alert('Error processing content. Please try again or paste simpler text.');
+    }
+    setIsParsingImport(false);
   };
 
   // Step management
@@ -746,6 +914,25 @@ Create 5-10 steps, each with 2-5 bullet points for details. No other text, just 
           </div>
           
           <button
+            onClick={() => { resetImport(); setView('import'); }}
+            style={{
+              background: 'rgba(16, 185, 129, 0.2)',
+              border: '1px solid rgba(16, 185, 129, 0.3)',
+              borderRadius: '12px',
+              padding: '14px 24px',
+              color: '#10B981',
+              fontWeight: '600',
+              fontSize: '15px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px'
+            }}
+          >
+            <Upload size={20} /> Import Existing
+          </button>
+          
+          <button
             onClick={() => { resetBuilder(); setView('builder'); }}
             style={{
               background: 'linear-gradient(135deg, #8B5CF6 0%, #6366F1 100%)',
@@ -836,20 +1023,39 @@ Create 5-10 steps, each with 2-5 bullet points for details. No other text, just 
                 ? 'Try adjusting your search or filter'
                 : 'Create your first standard operating procedure'}
             </p>
-            <button
-              onClick={() => { resetBuilder(); setView('builder'); }}
-              style={{
-                background: 'linear-gradient(135deg, #8B5CF6 0%, #6366F1 100%)',
-                border: 'none',
-                borderRadius: '10px',
-                padding: '12px 24px',
-                color: 'white',
-                fontWeight: '600',
-                cursor: 'pointer'
-              }}
-            >
-              Create First SOP
-            </button>
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
+              <button
+                onClick={() => { resetImport(); setView('import'); }}
+                style={{
+                  background: 'rgba(16, 185, 129, 0.2)',
+                  border: '1px solid rgba(16, 185, 129, 0.3)',
+                  borderRadius: '10px',
+                  padding: '12px 24px',
+                  color: '#10B981',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px'
+                }}
+              >
+                <Upload size={18} /> Import Existing
+              </button>
+              <button
+                onClick={() => { resetBuilder(); setView('builder'); }}
+                style={{
+                  background: 'linear-gradient(135deg, #8B5CF6 0%, #6366F1 100%)',
+                  border: 'none',
+                  borderRadius: '10px',
+                  padding: '12px 24px',
+                  color: 'white',
+                  fontWeight: '600',
+                  cursor: 'pointer'
+                }}
+              >
+                Create First SOP
+              </button>
+            </div>
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -970,6 +1176,338 @@ Create 5-10 steps, each with 2-5 bullet points for details. No other text, just 
             ))}
           </div>
         )}
+      </div>
+    );
+  }
+
+  // IMPORT VIEW
+  if (view === 'import') {
+    return (
+      <div style={{ padding: '32px', maxWidth: '900px', margin: '0 auto' }}>
+        {/* Header */}
+        <div style={{ 
+          display: 'flex', 
+          justifyContent: 'space-between', 
+          alignItems: 'center',
+          marginBottom: '32px'
+        }}>
+          <button
+            onClick={() => { setView('library'); resetImport(); }}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: '#94A3B8',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              fontSize: '15px'
+            }}
+          >
+            <ArrowLeft size={20} /> Back to Library
+          </button>
+        </div>
+
+        {/* Import Header */}
+        <div style={{ textAlign: 'center', marginBottom: '40px' }}>
+          <Upload size={48} color="#10B981" style={{ marginBottom: '16px' }} />
+          <h2 style={{ fontSize: '24px', fontWeight: '700', color: '#E2E8F0', marginBottom: '8px' }}>
+            Import Existing SOP
+          </h2>
+          <p style={{ color: '#64748B' }}>
+            Paste content or upload a file — AI will structure it for you
+          </p>
+        </div>
+
+        {/* Import Method Toggle */}
+        <div style={{ 
+          display: 'flex', 
+          gap: '12px', 
+          marginBottom: '24px',
+          justifyContent: 'center'
+        }}>
+          <button
+            onClick={() => setImportMethod('paste')}
+            style={{
+              background: importMethod === 'paste' 
+                ? 'linear-gradient(135deg, #10B981 0%, #059669 100%)' 
+                : 'rgba(30, 41, 59, 0.8)',
+              border: importMethod === 'paste' ? 'none' : '1px solid rgba(255,255,255,0.1)',
+              borderRadius: '10px',
+              padding: '12px 24px',
+              color: 'white',
+              fontWeight: '500',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px'
+            }}
+          >
+            <ClipboardPaste size={18} /> Paste Text
+          </button>
+          <button
+            onClick={() => setImportMethod('upload')}
+            style={{
+              background: importMethod === 'upload' 
+                ? 'linear-gradient(135deg, #10B981 0%, #059669 100%)' 
+                : 'rgba(30, 41, 59, 0.8)',
+              border: importMethod === 'upload' ? 'none' : '1px solid rgba(255,255,255,0.1)',
+              borderRadius: '10px',
+              padding: '12px 24px',
+              color: 'white',
+              fontWeight: '500',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px'
+            }}
+          >
+            <FileUp size={18} /> Upload File
+          </button>
+        </div>
+
+        {/* Import Content Area */}
+        <div style={{ 
+          background: 'rgba(30, 41, 59, 0.6)',
+          borderRadius: '16px',
+          padding: '32px'
+        }}>
+          {/* Department Selector */}
+          <label style={{ display: 'block', marginBottom: '8px', color: '#94A3B8', fontSize: '14px' }}>
+            Department
+          </label>
+          <select
+            value={importDept}
+            onChange={(e) => setImportDept(e.target.value)}
+            style={{
+              width: '100%',
+              background: 'rgba(15, 23, 42, 0.8)',
+              border: '1px solid rgba(255,255,255,0.1)',
+              borderRadius: '10px',
+              padding: '14px 16px',
+              color: 'white',
+              fontSize: '15px',
+              marginBottom: '24px',
+              cursor: 'pointer'
+            }}
+          >
+            <option value="">Select a department...</option>
+            {departments.map(dept => (
+              <option key={dept.id} value={dept.id}>{dept.name}</option>
+            ))}
+          </select>
+
+          {/* Paste Method */}
+          {importMethod === 'paste' && (
+            <>
+              <label style={{ display: 'block', marginBottom: '8px', color: '#94A3B8', fontSize: '14px' }}>
+                Paste your SOP content
+              </label>
+              <textarea
+                value={pasteContent}
+                onChange={(e) => setPasteContent(e.target.value)}
+                placeholder={`Paste your existing SOP here...
+
+Example formats that work well:
+• Numbered lists (1. First step, 2. Second step)
+• Bullet points
+• Paragraph descriptions
+• Spreadsheet content (copy cells)
+• Any text describing a procedure`}
+                rows={12}
+                style={{
+                  width: '100%',
+                  background: 'rgba(15, 23, 42, 0.8)',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  borderRadius: '10px',
+                  padding: '14px 16px',
+                  color: 'white',
+                  fontSize: '14px',
+                  resize: 'vertical',
+                  fontFamily: 'inherit',
+                  lineHeight: '1.6'
+                }}
+              />
+              <p style={{ color: '#64748B', fontSize: '13px', marginTop: '8px' }}>
+                Tip: Copy directly from Word, Google Docs, Excel, or any other source
+              </p>
+            </>
+          )}
+
+          {/* Upload Method */}
+          {importMethod === 'upload' && (
+            <>
+              <label style={{ display: 'block', marginBottom: '8px', color: '#94A3B8', fontSize: '14px' }}>
+                Upload a file
+              </label>
+              
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileUpload}
+                accept=".txt,.md,.csv,.json"
+                style={{ display: 'none' }}
+              />
+              
+              {!uploadedFileName ? (
+                <div
+                  onClick={() => fileInputRef.current?.click()}
+                  style={{
+                    border: '2px dashed rgba(16, 185, 129, 0.3)',
+                    borderRadius: '12px',
+                    padding: '48px',
+                    textAlign: 'center',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease'
+                  }}
+                  onDragOver={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = '#10B981'; }}
+                  onDragLeave={(e) => { e.currentTarget.style.borderColor = 'rgba(16, 185, 129, 0.3)'; }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    e.currentTarget.style.borderColor = 'rgba(16, 185, 129, 0.3)';
+                    const file = e.dataTransfer.files[0];
+                    if (file) {
+                      const fakeEvent = { target: { files: [file] } };
+                      handleFileUpload(fakeEvent);
+                    }
+                  }}
+                >
+                  <FileUp size={40} color="#10B981" style={{ marginBottom: '12px' }} />
+                  <p style={{ color: '#E2E8F0', fontWeight: '500', marginBottom: '4px' }}>
+                    Click to upload or drag and drop
+                  </p>
+                  <p style={{ color: '#64748B', fontSize: '13px' }}>
+                    Supports: TXT, MD, CSV, JSON
+                  </p>
+                </div>
+              ) : (
+                <div style={{
+                  background: 'rgba(16, 185, 129, 0.1)',
+                  border: '1px solid rgba(16, 185, 129, 0.3)',
+                  borderRadius: '12px',
+                  padding: '16px'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
+                    {uploadedFileName.endsWith('.csv') ? (
+                      <FileSpreadsheet size={24} color="#10B981" />
+                    ) : (
+                      <File size={24} color="#10B981" />
+                    )}
+                    <div style={{ flex: 1 }}>
+                      <p style={{ color: '#E2E8F0', fontWeight: '500' }}>{uploadedFileName}</p>
+                      <p style={{ color: '#64748B', fontSize: '13px' }}>
+                        {uploadedFileContent.length.toLocaleString()} characters
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => { setUploadedFileName(''); setUploadedFileContent(''); }}
+                      style={{
+                        background: 'rgba(239, 68, 68, 0.2)',
+                        border: 'none',
+                        borderRadius: '8px',
+                        padding: '8px',
+                        color: '#F87171',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+                  
+                  {/* Preview */}
+                  <div style={{
+                    background: 'rgba(15, 23, 42, 0.8)',
+                    borderRadius: '8px',
+                    padding: '12px',
+                    maxHeight: '200px',
+                    overflow: 'auto'
+                  }}>
+                    <pre style={{ 
+                      color: '#94A3B8', 
+                      fontSize: '12px', 
+                      whiteSpace: 'pre-wrap',
+                      margin: 0,
+                      fontFamily: 'monospace'
+                    }}>
+                      {uploadedFileContent.substring(0, 1000)}
+                      {uploadedFileContent.length > 1000 && '...'}
+                    </pre>
+                  </div>
+                </div>
+              )}
+              
+              <p style={{ color: '#64748B', fontSize: '13px', marginTop: '12px' }}>
+                For Word docs (.docx) or Excel (.xlsx): Open the file, copy the content, and use "Paste Text" instead
+              </p>
+            </>
+          )}
+
+          {/* Process Button */}
+          <button
+            onClick={parseImportedContent}
+            disabled={
+              !importDept || 
+              isParsingImport || 
+              (importMethod === 'paste' && !pasteContent.trim()) ||
+              (importMethod === 'upload' && !uploadedFileContent)
+            }
+            style={{
+              width: '100%',
+              marginTop: '24px',
+              background: (!importDept || 
+                (importMethod === 'paste' && !pasteContent.trim()) ||
+                (importMethod === 'upload' && !uploadedFileContent))
+                ? 'rgba(16, 185, 129, 0.3)'
+                : 'linear-gradient(135deg, #10B981 0%, #059669 100%)',
+              border: 'none',
+              borderRadius: '12px',
+              padding: '16px',
+              color: 'white',
+              fontWeight: '600',
+              fontSize: '16px',
+              cursor: (!importDept || 
+                (importMethod === 'paste' && !pasteContent.trim()) ||
+                (importMethod === 'upload' && !uploadedFileContent))
+                ? 'not-allowed' : 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '10px'
+            }}
+          >
+            {isParsingImport ? (
+              <>
+                <Loader size={20} style={{ animation: 'spin 1s linear infinite' }} />
+                Processing with AI...
+              </>
+            ) : (
+              <>
+                <Sparkles size={20} />
+                Convert to Structured SOP
+              </>
+            )}
+          </button>
+        </div>
+
+        {/* Tips */}
+        <div style={{
+          marginTop: '24px',
+          background: 'rgba(139, 92, 246, 0.1)',
+          border: '1px solid rgba(139, 92, 246, 0.2)',
+          borderRadius: '12px',
+          padding: '20px'
+        }}>
+          <h4 style={{ color: '#A78BFA', fontSize: '14px', fontWeight: '600', marginBottom: '12px' }}>
+            💡 What works best
+          </h4>
+          <ul style={{ color: '#94A3B8', fontSize: '13px', margin: 0, paddingLeft: '20px', lineHeight: '1.8' }}>
+            <li>Any numbered or bulleted list of steps</li>
+            <li>Paragraphs describing a process</li>
+            <li>Spreadsheet cells copied directly</li>
+            <li>Existing SOPs from other systems</li>
+            <li>Even rough notes — AI will organize them</li>
+          </ul>
+        </div>
       </div>
     );
   }
