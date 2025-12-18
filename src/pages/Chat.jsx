@@ -1,5 +1,5 @@
 // Empire AI - Chat Interface
-// Version 3.3 - Fixed Dashboard Quick Chat Integration (sessionStorage)
+// Version 3.4 - Fixed Send Button Click Handler
 
 import React, { useState, useEffect, useRef } from 'react';
 import { 
@@ -283,7 +283,7 @@ export default function Chat({
     return response.replace(/\[ISSUE_CREATED\].*?\[\/ISSUE_CREATED\]/gs, '').trim();
   };
 
-  // Direct send function (used by sessionStorage auto-send)
+  // Direct send function (used by sessionStorage auto-send and button click)
   const sendMessageDirect = async (messageText) => {
     if (!messageText.trim() || isThinking) return;
     
@@ -419,10 +419,18 @@ Keep responses helpful, specific to Empire Remodeling's context, and reference t
     }
   };
 
-  // Send message (form submission)
+  // Send message (form submission or button click)
   const sendMessage = async (e) => {
-    e?.preventDefault();
+    if (e) e.preventDefault();
+    if (!input.trim() || isThinking) return;
     await sendMessageDirect(input);
+  };
+
+  // Handle button click directly
+  const handleSendClick = (e) => {
+    e.preventDefault();
+    if (!input.trim() || isThinking) return;
+    sendMessageDirect(input);
   };
 
   // Start new chat (save current and clear)
@@ -790,7 +798,8 @@ Keep responses helpful, specific to Empire Remodeling's context, and reference t
             }}
           />
           <button
-            type="submit"
+            type="button"
+            onClick={handleSendClick}
             disabled={!input.trim() || isThinking}
             style={{
               padding: '12px 20px',
