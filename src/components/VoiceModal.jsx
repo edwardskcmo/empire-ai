@@ -1,5 +1,5 @@
 // Empire AI - Voice Modal (Carson)
-// Version 3.0 - With Analytics Tracking
+// Version 3.1 - Fixed: Slower speech, better pacing, no cut-offs
 
 import React, { useState, useRef, useEffect } from 'react';
 import { X, Mic, MicOff, Square, Volume2, VolumeX, Sparkles } from 'lucide-react';
@@ -9,6 +9,23 @@ import {
   getCachedEmbedding,
   setCachedEmbedding,
 } from '../utils';
+
+// Voice configuration - adjust these to tune behavior
+const VOICE_CONFIG = {
+  // How long to wait after Carson finishes speaking before listening again (ms)
+  RESTART_DELAY: 2500,
+  
+  // How long to wait after user stops speaking before processing (ms)
+  SILENCE_DELAY: 1500,
+  
+  // ElevenLabs voice settings
+  ELEVENLABS: {
+    stability: 0.75,        // Higher = more consistent, calmer (0-1)
+    similarity_boost: 0.75, // Voice matching (0-1)
+    style: 0.0,             // Style exaggeration - keep low for natural
+    speed: 0.85,            // Slower than default (1.0) - range ~0.7-1.3
+  }
+};
 
 export default function VoiceModal({
   onClose,
@@ -32,7 +49,7 @@ export default function VoiceModal({
   const [transcript, setTranscript] = useState('');
   const [response, setResponse] = useState('');
   const [isMuted, setIsMuted] = useState(false);
-  const [debug, setDebug] = useState('');
+  const [debug, setDebug] = useState('Tap the mic to start');
   const [notification, setNotification] = useState(null);
   
   const recognitionRef = useRef(null);
@@ -40,7 +57,9 @@ export default function VoiceModal({
   const audioRef = useRef(null);
   const shouldAutoRestartRef = useRef(true);
   const autoRestartTimeoutRef = useRef(null);
+  const silenceTimeoutRef = useRef(null);
   const sessionTrackedRef = useRef(false);
+  const finalTranscriptRef = useRef('');
 
   // Track voice session once on mount
   useEffect(() => {
@@ -143,20 +162,27 @@ export default function VoiceModal({
     return text.replace(/\[ISSUE_CREATED\][\s\S]*?\[\/ISSUE_CREATED\]/gi, '').trim();
   };
 
-  // Speak with ElevenLabs
+  // Speak with ElevenLabs - with voice settings
   const speakWithElevenLabs = async (text) => {
     if (isMuted) {
       setStatus('idle');
+      setDebug('Response muted. Tap mic when ready.');
       shouldAutoRestartRef.current = true;
-      autoRestartTimeoutRef.current = setTimeout(() => startListening(), 800);
+      autoRestartTimeoutRef.current = setTimeout(() => startListening(), VOICE_CONFIG.RESTART_DELAY);
       return;
     }
     
     try {
+      setDebug('Carson is speaking...');
+      
       const response = await fetch('/api/text-to-speech', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ 
+          text,
+          // Pass voice settings to API
+          voice_settings: VOICE_CONFIG.ELEVENLABS
+        }),
       });
       
       if (!response.ok) {
@@ -179,12 +205,19 @@ export default function VoiceModal({
         audioRef.current.pause();
       }
       audioRef.current = new Audio(audioUrl);
+      
       audioRef.current.onended = () => {
         setStatus('idle');
+        setDebug('Your turn. Tap mic or just start speaking...');
         if (shouldAutoRestartRef.current) {
-          autoRestartTimeoutRef.current = setTimeout(() => startListening(), 800);
+          // Wait longer before restarting - gives user time to think
+          autoRestartTimeoutRef.current = setTimeout(() => {
+            setDebug('Listening...');
+            startListening();
+          }, VOICE_CONFIG.RESTART_DELAY);
         }
       };
+      
       audioRef.current.play();
       setStatus('speaking');
       
@@ -201,13 +234,14 @@ export default function VoiceModal({
     }
     
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 1;
+    utterance.rate = 0.9; // Slightly slower
     utterance.pitch = 1;
     
     utterance.onend = () => {
       setStatus('idle');
+      setDebug('Your turn. Tap mic when ready.');
       if (shouldAutoRestartRef.current) {
-        autoRestartTimeoutRef.current = setTimeout(() => startListening(), 800);
+        autoRestartTimeoutRef.current = setTimeout(() => startListening(), VOICE_CONFIG.RESTART_DELAY);
       }
     };
     
@@ -215,61 +249,121 @@ export default function VoiceModal({
     setStatus('speaking');
   };
 
+  // Clear all timeouts
+  const clearAllTimeouts = () => {
+    if (autoRestartTimeoutRef.current) {
+      clearTimeout(autoRestartTimeoutRef.current);
+      autoRestartTimeoutRef.current = null;
+    }
+    if (silenceTimeoutRef.current) {
+      clearTimeout(silenceTimeoutRef.current);
+      silenceTimeoutRef.current = null;
+    }
+  };
+
   // Start listening
   const startListening = () => {
+    // Clear any pending timeouts
+    clearAllTimeouts();
+    
     if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-      setDebug('Browser not supported');
+      setDebug('Browser not supported. Try Chrome or Edge.');
       return;
     }
     
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     recognitionRef.current = new SpeechRecognition();
-    recognitionRef.current.continuous = false;
+    recognitionRef.current.continuous = true; // Keep listening for multiple phrases
     recognitionRef.current.interimResults = true;
     recognitionRef.current.lang = 'en-US';
+    
+    // Reset transcript holder
+    finalTranscriptRef.current = '';
     
     recognitionRef.current.onstart = () => {
       setStatus('listening');
       setTranscript('');
       shouldAutoRestartRef.current = true;
-      setDebug('Listening...');
+      setDebug('Listening... speak naturally');
     };
     
     recognitionRef.current.onresult = (event) => {
-      let finalTranscript = '';
+      // Clear any existing silence timeout - user is still speaking
+      if (silenceTimeoutRef.current) {
+        clearTimeout(silenceTimeoutRef.current);
+      }
+      
+      let interimTranscript = '';
+      
       for (let i = event.resultIndex; i < event.results.length; i++) {
-        const transcript = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          finalTranscript += transcript;
+        const result = event.results[i];
+        if (result.isFinal) {
+          finalTranscriptRef.current += result[0].transcript + ' ';
         } else {
-          setTranscript(transcript);
+          interimTranscript += result[0].transcript;
         }
       }
       
-      if (finalTranscript) {
-        setTranscript(finalTranscript);
-        processQuery(finalTranscript);
+      // Show what's being heard
+      const displayText = finalTranscriptRef.current + interimTranscript;
+      setTranscript(displayText.trim());
+      
+      // Set a silence timeout - if user stops for X seconds, process
+      if (finalTranscriptRef.current.trim()) {
+        silenceTimeoutRef.current = setTimeout(() => {
+          // User has paused - stop recognition and process
+          if (recognitionRef.current) {
+            recognitionRef.current.stop();
+          }
+          const finalText = finalTranscriptRef.current.trim();
+          if (finalText) {
+            processQuery(finalText);
+          }
+        }, VOICE_CONFIG.SILENCE_DELAY);
       }
     };
     
     recognitionRef.current.onerror = (event) => {
-      setDebug(`Error: ${event.error}`);
+      if (event.error === 'no-speech') {
+        setDebug('No speech detected. Tap mic to try again.');
+      } else if (event.error === 'aborted') {
+        // User stopped - this is fine
+      } else {
+        setDebug(`Error: ${event.error}`);
+      }
       setStatus('idle');
     };
     
     recognitionRef.current.onend = () => {
-      if (status === 'listening') {
+      // Check if we have final transcript to process
+      const finalText = finalTranscriptRef.current.trim();
+      if (finalText && status === 'listening') {
+        // Process if we haven't already started processing
+        processQuery(finalText);
+      } else if (status === 'listening') {
         setStatus('idle');
+        setDebug('Tap mic to start');
       }
     };
     
-    recognitionRef.current.start();
+    try {
+      recognitionRef.current.start();
+    } catch (e) {
+      setDebug('Could not start listening. Try again.');
+    }
   };
 
   // Process query
   const processQuery = async (query) => {
+    // Stop listening while processing
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch (e) {}
+    }
+    
     setStatus('processing');
-    setDebug('Processing...');
+    setDebug('Thinking...');
     
     try {
       const { context, maxScore } = await buildKnowledgeContext(query);
@@ -281,7 +375,7 @@ export default function VoiceModal({
       
       const deptInstructions = activeDepartment?.instructions || '';
       
-      const systemPrompt = `You are Carson, the Empire AI voice assistant for Empire Remodeling.
+      const systemPrompt = `You are Carson, a calm and helpful voice assistant for Empire Remodeling.
 Your name is Carson. If asked your name, say "I'm Carson, your Empire AI assistant."
 
 Department: ${activeDepartment?.name || 'General'}
@@ -289,22 +383,29 @@ ${systemInstructions ? `\nSystem Instructions: ${systemInstructions}` : ''}
 ${deptInstructions ? `\nDepartment Instructions: ${deptInstructions}` : ''}
 ${context}
 
-VOICE RESPONSE RULES - FOLLOW STRICTLY:
-1. ONE sentence answer maximum - then STOP
-2. After answering, ask: "Anything else?" or "What else do you need?"
-3. NEVER list multiple items unless specifically asked "list them" or "what are they"
-4. NEVER mention data sources or where info came from
-5. NEVER explain reasoning or add context
-6. Wait for user to ask follow-up questions
+VOICE CONVERSATION RULES:
+1. Speak in a calm, natural, conversational tone
+2. Keep answers brief - one or two sentences maximum
+3. Pause naturally between thoughts
+4. After answering, invite follow-up: "What else?" or "Anything else you need?"
+5. If the user seems to be still talking or got cut off, apologize and ask them to continue
+6. Never list more than 2-3 items verbally - offer to go through them one at a time
+7. Don't mention where information came from
+8. Don't over-explain - the user will ask if they want more detail
+
+PACING:
+- Use commas and periods to create natural pauses
+- Avoid long run-on sentences
+- If giving a number, pause slightly after it
 
 ISSUE CREATION:
-If asked to create/log/add/report an issue, include:
+If asked to create/log/add/report an issue, include at the END of your response:
 [ISSUE_CREATED] Title | Priority | Department | Description [/ISSUE_CREATED]
 
-Example responses:
-- "How many projects?" → "54 projects. Anything else?"
-- "What's project 16?" → "Johnson Kitchen Remodel. Need details?"
-- "Budget for it?" → "$45,000. Anything else?"`;
+Example good responses:
+- "54 projects total. Want me to break those down by status?"
+- "That's the Johnson Kitchen Remodel. $45,000 budget, started last month. What would you like to know about it?"
+- "Got it, I've logged that as a high priority issue. Anything else?"`;
 
       const response = await fetch('/api/chat', {
         method: 'POST',
@@ -331,7 +432,6 @@ Example responses:
       }
       
       setResponse(aiResponse);
-      setDebug('Speaking...');
       
       // Log to intelligence
       addToIntelligence(createIntelligenceItem(
@@ -345,12 +445,13 @@ Example responses:
         1
       ));
       
+      // Speak the response
       speakWithElevenLabs(aiResponse);
       
     } catch (error) {
       console.error('Voice processing error:', error);
       setDebug(`Error: ${error.message}`);
-      const errorMsg = "I'm having trouble right now. Try again?";
+      const errorMsg = "Sorry, I'm having trouble right now. Can you try again?";
       setResponse(errorMsg);
       speakWithElevenLabs(errorMsg);
     }
@@ -359,13 +460,12 @@ Example responses:
   // Stop everything
   const stopAll = () => {
     shouldAutoRestartRef.current = false;
-    
-    if (autoRestartTimeoutRef.current) {
-      clearTimeout(autoRestartTimeoutRef.current);
-    }
+    clearAllTimeouts();
     
     if (recognitionRef.current) {
-      recognitionRef.current.abort();
+      try {
+        recognitionRef.current.abort();
+      } catch (e) {}
     }
     
     if (synthRef.current) {
@@ -377,7 +477,9 @@ Example responses:
       audioRef.current = null;
     }
     
+    finalTranscriptRef.current = '';
     setStatus('idle');
+    setDebug('Stopped. Tap mic to start again.');
   };
 
   // Handle close
@@ -475,7 +577,7 @@ Example responses:
         marginBottom: 24,
       }}>
         <span style={{ color: '#E2E8F0', fontSize: 14, textTransform: 'capitalize' }}>
-          {status === 'idle' ? 'Ready' : status}
+          {status === 'idle' ? 'Ready' : status === 'listening' ? 'Listening...' : status === 'processing' ? 'Thinking...' : 'Speaking'}
         </span>
       </div>
 
@@ -574,12 +676,14 @@ Example responses:
         </button>
       </div>
 
-      {/* Debug */}
+      {/* Debug/Status Message */}
       <div style={{
         position: 'absolute',
         bottom: 24,
-        fontSize: 11,
-        color: '#64748B',
+        fontSize: 12,
+        color: '#94A3B8',
+        textAlign: 'center',
+        maxWidth: 300,
       }}>
         {debug}
       </div>
