@@ -103,6 +103,10 @@ const SOPs = ({
     reader.readAsText(file);
   };
 
+  const isNotionUrl = (url) => {
+    return url.includes('notion.so') || url.includes('notion.site');
+  };
+
   const fetchUrlContent = async () => {
     if (!urlInput.trim()) {
       setUrlError('Please enter a URL');
@@ -119,7 +123,11 @@ const SOPs = ({
     setUrlError('');
     
     try {
-      const response = await fetch('/api/fetch-doc', {
+      // Detect if it's a Notion URL and use appropriate endpoint
+      const isNotion = isNotionUrl(url);
+      const endpoint = isNotion ? '/api/fetch-notion' : '/api/fetch-doc';
+      
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url })
@@ -128,7 +136,12 @@ const SOPs = ({
       const data = await response.json();
       
       if (data.error) {
-        setUrlError(data.error);
+        // Special handling for Notion setup required
+        if (data.setup_required) {
+          setUrlError('Notion integration not set up yet. See setup instructions below.');
+        } else {
+          setUrlError(data.error);
+        }
         setIsFetchingUrl(false);
         return;
       }
@@ -141,7 +154,8 @@ const SOPs = ({
       
       // Success - now parse the content
       setIsFetchingUrl(false);
-      await parseImportedContent(data.content, `Imported from: ${url}`);
+      const source = isNotion ? `Notion: ${data.title || url}` : `Imported from: ${url}`;
+      await parseImportedContent(data.content, source);
       
     } catch (error) {
       console.error('URL fetch error:', error);
@@ -1158,7 +1172,7 @@ Example:
                     type="text"
                     value={urlInput}
                     onChange={(e) => { setUrlInput(e.target.value); setUrlError(''); }}
-                    placeholder="https://docs.google.com/document/d/... or any public URL"
+                    placeholder="https://notion.so/... or https://docs.google.com/..."
                     style={{
                       width: '100%',
                       padding: '12px 12px 12px 40px',
@@ -1181,17 +1195,50 @@ Example:
                 border: '1px solid rgba(139, 92, 246, 0.2)',
                 borderRadius: '8px',
                 padding: '12px 16px',
-                marginBottom: '20px'
+                marginBottom: '16px'
               }}>
                 <p style={{ color: '#A78BFA', fontSize: '13px', margin: '0 0 8px', fontWeight: '500' }}>
-                  Supported URLs:
+                  ✓ Supported URLs:
                 </p>
                 <ul style={{ margin: 0, padding: '0 0 0 20px', color: '#94A3B8', fontSize: '13px' }}>
-                  <li>Google Docs (must be shared publicly or "anyone with link")</li>
-                  <li>Google Sheets (will extract text from cells)</li>
-                  <li>Any public webpage with procedure content</li>
+                  <li><strong>Notion pages</strong> — Must be shared with your integration</li>
+                  <li><strong>Google Docs</strong> — Must be "anyone with link" viewable</li>
+                  <li><strong>Google Sheets</strong> — Will extract text from cells</li>
+                  <li><strong>Public webpages</strong> — Any accessible URL</li>
                 </ul>
               </div>
+
+              {/* Notion Setup Instructions */}
+              <details style={{
+                background: 'rgba(30, 41, 59, 0.5)',
+                border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: '8px',
+                marginBottom: '20px'
+              }}>
+                <summary style={{
+                  padding: '12px 16px',
+                  color: '#94A3B8',
+                  fontSize: '13px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px'
+                }}>
+                  <span style={{ color: '#F59E0B' }}>📋</span> Notion Setup Instructions (one-time)
+                </summary>
+                <div style={{ padding: '0 16px 16px', color: '#64748B', fontSize: '13px', lineHeight: '1.6' }}>
+                  <ol style={{ margin: '8px 0 0', padding: '0 0 0 20px' }}>
+                    <li>Go to <a href="https://www.notion.so/my-integrations" target="_blank" rel="noopener noreferrer" style={{ color: '#8B5CF6' }}>notion.so/my-integrations</a></li>
+                    <li>Click "New integration" → Name it "Empire AI"</li>
+                    <li>Copy the "Internal Integration Secret"</li>
+                    <li>Add <code style={{ background: 'rgba(0,0,0,0.3)', padding: '2px 6px', borderRadius: '4px' }}>NOTION_API_KEY</code> to Vercel environment variables</li>
+                    <li>In Notion: Open your page → ••• menu → "Connections" → Add "Empire AI"</li>
+                  </ol>
+                  <p style={{ margin: '12px 0 0', color: '#94A3B8' }}>
+                    ⚠️ Each page must be individually shared with your integration.
+                  </p>
+                </div>
+              </details>
 
               <button
                 onClick={fetchUrlContent}
