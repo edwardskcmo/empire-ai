@@ -1,1212 +1,1761 @@
-// Empire AI - SOP Builder Page
-// AI-powered Standard Operating Procedure creation with question-driven approach
-
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { 
-  FileText, Plus, ArrowLeft, ArrowRight, Check, Trash2, Edit3, 
-  ChevronDown, ChevronUp, Search, Filter, Sparkles, ListOrdered,
-  Save, X, GripVertical, AlertCircle, CheckCircle, Loader
+  FileText, Plus, Sparkles, ChevronRight, ChevronDown, Check, 
+  Trash2, Edit3, Save, X, GripVertical, Loader, ArrowLeft,
+  Search, Filter, BookOpen, Lightbulb, List, PlusCircle, MinusCircle
 } from 'lucide-react';
 
 export default function SOPs({ 
   departments, 
-  sops, 
-  setSops, 
   knowledge, 
-  setKnowledge,
-  logActivity,
+  setKnowledge, 
+  sops,
+  setSops,
+  logActivity, 
   addToIntelligence 
 }) {
   // View state
-  const [view, setView] = useState('library'); // 'library' or 'builder'
+  const [view, setView] = useState('library'); // 'library' | 'builder' | 'editor'
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterDept, setFilterDept] = useState('all');
   
   // Builder state
-  const [stage, setStage] = useState(1); // 1: Describe, 2: Answer, 3: Review, 4: Saved
+  const [builderStage, setBuilderStage] = useState(1); // 1-4
   const [selectedDept, setSelectedDept] = useState('');
-  const [sopDescription, setSopDescription] = useState('');
+  const [sopIdea, setSopIdea] = useState('');
+  const [isGeneratingQuestions, setIsGeneratingQuestions] = useState(false);
   const [questions, setQuestions] = useState([]);
   const [answers, setAnswers] = useState({});
-  const [generatedSOP, setGeneratedSOP] = useState(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [isGeneratingSOP, setIsGeneratingSOP] = useState(false);
   
-  // Library state
-  const [searchTerm, setSearchTerm] = useState('');
-  const [filterDept, setFilterDept] = useState('');
-  const [expandedSOP, setExpandedSOP] = useState(null);
+  // Current SOP being built/edited
+  const [currentSOP, setCurrentSOP] = useState(null);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [editingDescription, setEditingDescription] = useState(false);
+  const [tempTitle, setTempTitle] = useState('');
+  const [tempDescription, setTempDescription] = useState('');
   
-  // Edit state for review stage
+  // Step editing state
+  const [expandedSteps, setExpandedSteps] = useState({});
   const [editingStep, setEditingStep] = useState(null);
+  const [editingBullet, setEditingBullet] = useState(null);
+  
+  // Drag and drop state
+  const [draggedStep, setDraggedStep] = useState(null);
+  const [draggedBullet, setDraggedBullet] = useState(null);
+  const [dragOverStep, setDragOverStep] = useState(null);
+  const [dragOverBullet, setDragOverBullet] = useState(null);
+  
+  // Library viewing
+  const [expandedSOP, setExpandedSOP] = useState(null);
 
-  // Start new SOP
-  const startNewSOP = () => {
-    setView('builder');
-    setStage(1);
-    setSelectedDept('');
-    setSopDescription('');
-    setQuestions([]);
-    setAnswers({});
-    setGeneratedSOP(null);
-    setError('');
-  };
+  // Filter SOPs
+  const filteredSOPs = (sops || []).filter(sop => {
+    const matchesSearch = sop.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                          sop.description?.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesDept = filterDept === 'all' || sop.departmentId === filterDept;
+    return matchesSearch && matchesDept;
+  });
 
-  // Generate questions from description
+  // Generate questions from AI
   const generateQuestions = async () => {
-    if (!sopDescription.trim() || !selectedDept) {
-      setError('Please select a department and describe the procedure.');
-      return;
-    }
+    if (!sopIdea.trim() || !selectedDept) return;
     
-    setIsLoading(true);
-    setError('');
-    
-    const dept = departments.find(d => d.id === selectedDept);
-    
+    setIsGeneratingQuestions(true);
     try {
+      const dept = departments.find(d => d.id === selectedDept);
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message: `I need to create an SOP (Standard Operating Procedure) for: "${sopDescription}"
+          message: `I want to create an SOP for: "${sopIdea}"
+          
+This is for the ${dept?.name || 'general'} department.
 
-This is for the ${dept?.name || 'General'} department.
+Generate 5-7 clarifying questions I should answer to create a comprehensive SOP. Focus on:
+- Who performs this task
+- What triggers this process
+- Key steps and decision points
+- Safety or compliance requirements
+- Tools or materials needed
+- Expected outcomes and quality checks
 
-Generate 5-7 clarifying questions that will help create a comprehensive, step-by-step procedure. Focus on:
-- Key steps and their order
-- Required tools, materials, or resources
-- Safety considerations
-- Common mistakes to avoid
-- Quality checkpoints
-- Who is responsible for each part
+Return ONLY a JSON array of question objects with this format:
+[{"question": "...", "hint": "...", "required": true/false}]
 
-Format your response as a JSON array of question objects:
-[
-  {"id": 1, "question": "...", "hint": "Brief hint about what info is needed", "required": true},
-  {"id": 2, "question": "...", "hint": "...", "required": false}
-]
-
-Return ONLY the JSON array, no other text.`,
-          systemPrompt: 'You are an SOP creation assistant. Generate clear, specific questions to gather information needed for a detailed standard operating procedure. Return only valid JSON.',
+No other text, just the JSON array.`,
+          systemPrompt: 'You are an SOP expert. Return only valid JSON arrays.',
           conversationHistory: []
         })
       });
       
-      if (!response.ok) throw new Error('Failed to generate questions');
-      
       const data = await response.json();
-      let parsedQuestions;
-      
+      let parsed = [];
       try {
-        // Try to parse the response as JSON
         const jsonMatch = data.response.match(/\[[\s\S]*\]/);
         if (jsonMatch) {
-          parsedQuestions = JSON.parse(jsonMatch[0]);
-        } else {
-          throw new Error('No JSON found');
+          parsed = JSON.parse(jsonMatch[0]);
         }
       } catch {
-        // Fallback questions if parsing fails
-        parsedQuestions = [
-          { id: 1, question: "What are the main steps in this procedure?", hint: "List the key actions in order", required: true },
-          { id: 2, question: "What tools or materials are needed?", hint: "Equipment, supplies, software, etc.", required: true },
-          { id: 3, question: "Are there any safety considerations?", hint: "PPE, hazards, precautions", required: false },
-          { id: 4, question: "What are common mistakes to avoid?", hint: "Things that often go wrong", required: false },
-          { id: 5, question: "How do you verify the work is complete?", hint: "Quality checks, sign-offs", required: true },
+        parsed = [
+          { question: "Who typically performs this procedure?", hint: "Job title or role", required: true },
+          { question: "What triggers this process to start?", hint: "Event, schedule, or request", required: true },
+          { question: "What tools or materials are needed?", hint: "Equipment, software, supplies", required: false },
+          { question: "Are there safety or compliance requirements?", hint: "OSHA, permits, certifications", required: false },
+          { question: "How do you know when it's done correctly?", hint: "Quality checks, sign-offs", required: true }
         ];
       }
       
-      setQuestions(parsedQuestions);
-      setStage(2);
-      
-    } catch (err) {
-      console.error('Question generation error:', err);
-      setError('Failed to generate questions. Please try again.');
-    } finally {
-      setIsLoading(false);
+      setQuestions(parsed);
+      setBuilderStage(2);
+    } catch (error) {
+      console.error('Error generating questions:', error);
     }
+    setIsGeneratingQuestions(false);
   };
 
   // Generate SOP from answers
   const generateSOP = async () => {
-    const requiredUnanswered = questions
-      .filter(q => q.required && (!answers[q.id] || !answers[q.id].trim()))
-      .length;
-    
-    if (requiredUnanswered > 0) {
-      setError(`Please answer all required questions (${requiredUnanswered} remaining)`);
-      return;
-    }
-    
-    setIsLoading(true);
-    setError('');
-    
-    const dept = departments.find(d => d.id === selectedDept);
-    
-    // Format Q&A for the prompt
-    const qaText = questions
-      .map(q => `Q: ${q.question}\nA: ${answers[q.id] || 'Not provided'}`)
-      .join('\n\n');
-    
+    setIsGeneratingSOP(true);
     try {
+      const dept = departments.find(d => d.id === selectedDept);
+      const qaText = questions.map((q, i) => 
+        `Q: ${q.question}\nA: ${answers[i] || 'Not provided'}`
+      ).join('\n\n');
+      
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message: `Create a detailed Standard Operating Procedure (SOP) based on:
+          message: `Create a detailed SOP based on this information:
 
-PROCEDURE DESCRIPTION:
-${sopDescription}
+Original idea: "${sopIdea}"
+Department: ${dept?.name || 'General'}
 
-DEPARTMENT: ${dept?.name || 'General'}
-
-INFORMATION GATHERED:
+Questions and Answers:
 ${qaText}
 
-Generate a complete SOP with:
-1. A clear, descriptive title
-2. A brief description/purpose statement
-3. 5-10 detailed steps, each with:
-   - Step number
-   - Action title
-   - Detailed instructions
-   - Any notes or warnings
-
-Format as JSON:
+Return ONLY a JSON object with this exact format:
 {
-  "title": "SOP Title",
-  "description": "Brief purpose statement",
+  "title": "Clear SOP title",
+  "description": "One paragraph overview",
   "steps": [
     {
-      "number": 1,
-      "title": "Step Title",
-      "instructions": "Detailed instructions for this step",
-      "notes": "Optional notes, warnings, or tips"
+      "title": "Step 1 Title",
+      "bullets": ["Detail point 1", "Detail point 2", "Detail point 3"]
     }
   ]
 }
 
-Return ONLY the JSON, no other text.`,
-          systemPrompt: 'You are an SOP creation expert. Create clear, actionable procedures that anyone can follow. Return only valid JSON.',
+Create 5-10 steps, each with 2-5 bullet points for details. No other text, just JSON.`,
+          systemPrompt: 'You are an SOP expert. Return only valid JSON.',
           conversationHistory: []
         })
       });
       
-      if (!response.ok) throw new Error('Failed to generate SOP');
-      
       const data = await response.json();
-      let parsedSOP;
-      
+      let parsed = null;
       try {
         const jsonMatch = data.response.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
-          parsedSOP = JSON.parse(jsonMatch[0]);
-        } else {
-          throw new Error('No JSON found');
+          parsed = JSON.parse(jsonMatch[0]);
         }
       } catch {
-        // Fallback structure
-        parsedSOP = {
-          title: `SOP: ${sopDescription.substring(0, 50)}`,
-          description: sopDescription,
+        parsed = {
+          title: sopIdea,
+          description: "Standard operating procedure",
           steps: [
-            { number: 1, title: "Step 1", instructions: "Instructions generated from your answers", notes: "" }
+            { title: "Initial Setup", bullets: ["Gather required materials", "Review prerequisites", "Notify relevant parties"] },
+            { title: "Execute Procedure", bullets: ["Follow established guidelines", "Document progress", "Address issues as they arise"] },
+            { title: "Quality Check", bullets: ["Review completed work", "Verify compliance", "Obtain sign-off"] }
           ]
         };
       }
       
-      setGeneratedSOP(parsedSOP);
-      setStage(3);
-      
-    } catch (err) {
-      console.error('SOP generation error:', err);
-      setError('Failed to generate SOP. Please try again.');
-    } finally {
-      setIsLoading(false);
+      setCurrentSOP({
+        id: `sop_${Date.now()}`,
+        ...parsed,
+        departmentId: selectedDept,
+        departmentName: dept?.name || 'General',
+        createdAt: new Date().toISOString()
+      });
+      setBuilderStage(3);
+      // Expand all steps initially
+      const expanded = {};
+      parsed.steps?.forEach((_, i) => expanded[i] = true);
+      setExpandedSteps(expanded);
+    } catch (error) {
+      console.error('Error generating SOP:', error);
     }
+    setIsGeneratingSOP(false);
   };
 
   // Save SOP
-  const saveSOP = async () => {
-    if (!generatedSOP) return;
-    
-    const dept = departments.find(d => d.id === selectedDept);
+  const saveSOP = () => {
+    if (!currentSOP) return;
     
     const newSOP = {
-      id: `sop_${Date.now()}`,
-      title: generatedSOP.title,
-      description: generatedSOP.description,
-      department: selectedDept,
-      departmentName: dept?.name || 'General',
-      steps: generatedSOP.steps,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      ...currentSOP,
+      savedAt: new Date().toISOString()
     };
     
-    // Add to SOPs
-    setSops(prev => [newSOP, ...prev]);
+    setSops(prev => [newSOP, ...(prev || [])]);
     
-    // Add to Knowledge Base
-    const sopContent = generatedSOP.steps
-      .map(s => `${s.number}. ${s.title}: ${s.instructions}${s.notes ? ` (Note: ${s.notes})` : ''}`)
-      .join('\n');
+    // Add to knowledge base
+    const knowledgeContent = currentSOP.steps.map((step, i) => 
+      `Step ${i + 1}: ${step.title}\n${step.bullets.map(b => `  • ${b}`).join('\n')}`
+    ).join('\n\n');
     
     const knowledgeItem = {
       id: `kb_${Date.now()}`,
-      title: generatedSOP.title,
-      content: `${generatedSOP.description}\n\nSTEPS:\n${sopContent}`,
-      department: selectedDept,
+      title: `SOP: ${currentSOP.title}`,
+      content: `${currentSOP.description}\n\n${knowledgeContent}`,
+      department: currentSOP.departmentId,
       type: 'sop',
-      createdAt: new Date().toISOString(),
+      createdAt: new Date().toISOString()
     };
-    
     setKnowledge(prev => [knowledgeItem, ...prev]);
     
-    // Add to Intelligence
-    if (addToIntelligence) {
-      await addToIntelligence({
-        sourceType: 'sop_created',
-        sourceId: newSOP.id,
-        title: generatedSOP.title,
-        content: sopContent,
-        department: selectedDept,
-        tags: ['sop', 'procedure', 'process'],
-        metadata: { stepCount: generatedSOP.steps.length },
-        relevanceBoost: 3,
-      });
-    }
+    // Add to intelligence
+    addToIntelligence({
+      sourceType: 'sop_created',
+      sourceId: newSOP.id,
+      title: newSOP.title,
+      content: knowledgeContent,
+      department: newSOP.departmentId,
+      tags: ['sop', 'procedure', 'process'],
+      relevanceBoost: 3
+    });
     
-    // Log activity
-    if (logActivity) {
-      logActivity(`Created SOP: ${generatedSOP.title}`, 'sop', dept?.name);
-    }
+    logActivity(`Created SOP: ${currentSOP.title}`, 'sop', currentSOP.departmentName);
+    setBuilderStage(4);
+  };
+
+  // Edit SOP from library
+  const editSOP = (sop) => {
+    setCurrentSOP({ ...sop });
+    const expanded = {};
+    sop.steps?.forEach((_, i) => expanded[i] = true);
+    setExpandedSteps(expanded);
+    setView('editor');
+  };
+
+  // Save edited SOP
+  const saveEditedSOP = () => {
+    if (!currentSOP) return;
     
-    setStage(4);
+    setSops(prev => prev.map(s => 
+      s.id === currentSOP.id ? { ...currentSOP, updatedAt: new Date().toISOString() } : s
+    ));
+    
+    logActivity(`Updated SOP: ${currentSOP.title}`, 'sop', currentSOP.departmentName);
+    setView('library');
+    setCurrentSOP(null);
   };
 
   // Delete SOP
   const deleteSOP = (sopId) => {
-    if (!confirm('Delete this SOP?')) return;
     setSops(prev => prev.filter(s => s.id !== sopId));
-    if (logActivity) logActivity('Deleted an SOP', 'sop');
+    logActivity('Deleted an SOP', 'sop');
+    if (expandedSOP === sopId) setExpandedSOP(null);
   };
 
-  // Update step in review
-  const updateStep = (index, field, value) => {
-    setGeneratedSOP(prev => ({
+  // Reset builder
+  const resetBuilder = () => {
+    setBuilderStage(1);
+    setSopIdea('');
+    setSelectedDept('');
+    setQuestions([]);
+    setAnswers({});
+    setCurrentSOP(null);
+    setExpandedSteps({});
+  };
+
+  // Step management
+  const toggleStepExpand = (index) => {
+    setExpandedSteps(prev => ({ ...prev, [index]: !prev[index] }));
+  };
+
+  const updateStepTitle = (index, newTitle) => {
+    setCurrentSOP(prev => ({
       ...prev,
-      steps: prev.steps.map((s, i) => 
-        i === index ? { ...s, [field]: value } : s
+      steps: prev.steps.map((step, i) => 
+        i === index ? { ...step, title: newTitle } : step
       )
     }));
+    setEditingStep(null);
   };
 
-  // Add new step
-  const addStep = () => {
-    setGeneratedSOP(prev => ({
+  const addStep = (afterIndex) => {
+    setCurrentSOP(prev => {
+      const newSteps = [...prev.steps];
+      newSteps.splice(afterIndex + 1, 0, { 
+        title: 'New Step', 
+        bullets: ['Add details here'] 
+      });
+      return { ...prev, steps: newSteps };
+    });
+    setExpandedSteps(prev => ({ ...prev, [afterIndex + 1]: true }));
+  };
+
+  const deleteStep = (index) => {
+    if (currentSOP.steps.length <= 1) return;
+    setCurrentSOP(prev => ({
       ...prev,
-      steps: [
-        ...prev.steps,
-        {
-          number: prev.steps.length + 1,
-          title: 'New Step',
-          instructions: '',
-          notes: ''
-        }
-      ]
+      steps: prev.steps.filter((_, i) => i !== index)
     }));
   };
 
-  // Remove step
-  const removeStep = (index) => {
-    setGeneratedSOP(prev => ({
+  // Bullet management
+  const updateBullet = (stepIndex, bulletIndex, newText) => {
+    setCurrentSOP(prev => ({
       ...prev,
-      steps: prev.steps
-        .filter((_, i) => i !== index)
-        .map((s, i) => ({ ...s, number: i + 1 }))
+      steps: prev.steps.map((step, si) => 
+        si === stepIndex ? {
+          ...step,
+          bullets: step.bullets.map((b, bi) => bi === bulletIndex ? newText : b)
+        } : step
+      )
+    }));
+    setEditingBullet(null);
+  };
+
+  const addBullet = (stepIndex, afterIndex) => {
+    setCurrentSOP(prev => ({
+      ...prev,
+      steps: prev.steps.map((step, si) => {
+        if (si !== stepIndex) return step;
+        const newBullets = [...step.bullets];
+        newBullets.splice(afterIndex + 1, 0, 'New detail');
+        return { ...step, bullets: newBullets };
+      })
     }));
   };
 
-  // Filter SOPs for library
-  const filteredSOPs = sops.filter(sop => {
-    const matchesSearch = !searchTerm || 
-      sop.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      sop.description.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesDept = !filterDept || sop.department === filterDept;
-    return matchesSearch && matchesDept;
-  });
+  const deleteBullet = (stepIndex, bulletIndex) => {
+    setCurrentSOP(prev => ({
+      ...prev,
+      steps: prev.steps.map((step, si) => {
+        if (si !== stepIndex) return step;
+        if (step.bullets.length <= 1) return step;
+        return { ...step, bullets: step.bullets.filter((_, bi) => bi !== bulletIndex) };
+      })
+    }));
+  };
 
-  // Answered count
-  const answeredCount = questions.filter(q => answers[q.id]?.trim()).length;
+  // Drag and drop for steps
+  const handleStepDragStart = (e, index) => {
+    setDraggedStep(index);
+    e.dataTransfer.effectAllowed = 'move';
+  };
 
+  const handleStepDragOver = (e, index) => {
+    e.preventDefault();
+    if (draggedStep === null || draggedStep === index) return;
+    setDragOverStep(index);
+  };
+
+  const handleStepDrop = (e, index) => {
+    e.preventDefault();
+    if (draggedStep === null || draggedStep === index) return;
+    
+    setCurrentSOP(prev => {
+      const newSteps = [...prev.steps];
+      const [removed] = newSteps.splice(draggedStep, 1);
+      newSteps.splice(index, 0, removed);
+      return { ...prev, steps: newSteps };
+    });
+    
+    setDraggedStep(null);
+    setDragOverStep(null);
+  };
+
+  const handleStepDragEnd = () => {
+    setDraggedStep(null);
+    setDragOverStep(null);
+  };
+
+  // Drag and drop for bullets
+  const handleBulletDragStart = (e, stepIndex, bulletIndex) => {
+    setDraggedBullet({ stepIndex, bulletIndex });
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleBulletDragOver = (e, stepIndex, bulletIndex) => {
+    e.preventDefault();
+    if (!draggedBullet || draggedBullet.stepIndex !== stepIndex) return;
+    if (draggedBullet.bulletIndex === bulletIndex) return;
+    setDragOverBullet({ stepIndex, bulletIndex });
+  };
+
+  const handleBulletDrop = (e, stepIndex, bulletIndex) => {
+    e.preventDefault();
+    if (!draggedBullet || draggedBullet.stepIndex !== stepIndex) return;
+    if (draggedBullet.bulletIndex === bulletIndex) return;
+    
+    setCurrentSOP(prev => ({
+      ...prev,
+      steps: prev.steps.map((step, si) => {
+        if (si !== stepIndex) return step;
+        const newBullets = [...step.bullets];
+        const [removed] = newBullets.splice(draggedBullet.bulletIndex, 1);
+        newBullets.splice(bulletIndex, 0, removed);
+        return { ...step, bullets: newBullets };
+      })
+    }));
+    
+    setDraggedBullet(null);
+    setDragOverBullet(null);
+  };
+
+  const handleBulletDragEnd = () => {
+    setDraggedBullet(null);
+    setDragOverBullet(null);
+  };
+
+  // Render step editor component
+  const renderStepEditor = (step, stepIndex, isEditable = true) => {
+    const isExpanded = expandedSteps[stepIndex];
+    const isEditingThisStep = editingStep === stepIndex;
+    const isDragOver = dragOverStep === stepIndex;
+    
+    return (
+      <div 
+        key={stepIndex}
+        draggable={isEditable}
+        onDragStart={(e) => handleStepDragStart(e, stepIndex)}
+        onDragOver={(e) => handleStepDragOver(e, stepIndex)}
+        onDrop={(e) => handleStepDrop(e, stepIndex)}
+        onDragEnd={handleStepDragEnd}
+        style={{
+          background: isDragOver ? 'rgba(139, 92, 246, 0.2)' : 'rgba(30, 41, 59, 0.6)',
+          borderRadius: '12px',
+          border: isDragOver ? '2px dashed #8B5CF6' : '1px solid rgba(255,255,255,0.1)',
+          marginBottom: '12px',
+          transition: 'all 0.2s ease'
+        }}
+      >
+        {/* Step Header */}
+        <div 
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            padding: '16px',
+            cursor: 'pointer',
+            gap: '12px'
+          }}
+          onClick={() => toggleStepExpand(stepIndex)}
+        >
+          {isEditable && (
+            <div 
+              style={{ cursor: 'grab', color: '#64748B' }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <GripVertical size={18} />
+            </div>
+          )}
+          
+          <div style={{
+            width: '32px',
+            height: '32px',
+            borderRadius: '50%',
+            background: 'linear-gradient(135deg, #8B5CF6 0%, #6366F1 100%)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontWeight: '700',
+            fontSize: '14px',
+            color: 'white',
+            flexShrink: 0
+          }}>
+            {stepIndex + 1}
+          </div>
+          
+          {isEditingThisStep ? (
+            <input
+              type="text"
+              value={step.title}
+              onChange={(e) => setCurrentSOP(prev => ({
+                ...prev,
+                steps: prev.steps.map((s, i) => 
+                  i === stepIndex ? { ...s, title: e.target.value } : s
+                )
+              }))}
+              onBlur={() => setEditingStep(null)}
+              onKeyDown={(e) => e.key === 'Enter' && setEditingStep(null)}
+              onClick={(e) => e.stopPropagation()}
+              autoFocus
+              style={{
+                flex: 1,
+                background: 'rgba(15, 23, 42, 0.8)',
+                border: '1px solid #8B5CF6',
+                borderRadius: '8px',
+                padding: '8px 12px',
+                color: 'white',
+                fontSize: '16px',
+                fontWeight: '600'
+              }}
+            />
+          ) : (
+            <span style={{ 
+              flex: 1, 
+              fontWeight: '600', 
+              fontSize: '16px',
+              color: '#E2E8F0'
+            }}>
+              {step.title}
+            </span>
+          )}
+          
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {isEditable && !isEditingThisStep && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setEditingStep(stepIndex);
+                }}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: '#64748B',
+                  cursor: 'pointer',
+                  padding: '4px'
+                }}
+              >
+                <Edit3 size={16} />
+              </button>
+            )}
+            
+            <span style={{ color: '#64748B', fontSize: '13px' }}>
+              {step.bullets?.length || 0} details
+            </span>
+            
+            {isExpanded ? <ChevronDown size={20} color="#64748B" /> : <ChevronRight size={20} color="#64748B" />}
+          </div>
+        </div>
+        
+        {/* Expanded Bullets */}
+        {isExpanded && (
+          <div style={{ 
+            padding: '0 16px 16px 60px',
+            borderTop: '1px solid rgba(255,255,255,0.05)'
+          }}>
+            {step.bullets?.map((bullet, bulletIndex) => {
+              const isEditingThisBullet = editingBullet?.stepIndex === stepIndex && editingBullet?.bulletIndex === bulletIndex;
+              const isBulletDragOver = dragOverBullet?.stepIndex === stepIndex && dragOverBullet?.bulletIndex === bulletIndex;
+              
+              return (
+                <div 
+                  key={bulletIndex}
+                  draggable={isEditable}
+                  onDragStart={(e) => handleBulletDragStart(e, stepIndex, bulletIndex)}
+                  onDragOver={(e) => handleBulletDragOver(e, stepIndex, bulletIndex)}
+                  onDrop={(e) => handleBulletDrop(e, stepIndex, bulletIndex)}
+                  onDragEnd={handleBulletDragEnd}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: '10px',
+                    padding: '10px 12px',
+                    marginTop: '8px',
+                    background: isBulletDragOver ? 'rgba(139, 92, 246, 0.15)' : 'rgba(15, 23, 42, 0.5)',
+                    borderRadius: '8px',
+                    border: isBulletDragOver ? '1px dashed #8B5CF6' : '1px solid rgba(255,255,255,0.05)',
+                    transition: 'all 0.2s ease'
+                  }}
+                >
+                  {isEditable && (
+                    <div style={{ cursor: 'grab', color: '#475569', marginTop: '2px' }}>
+                      <GripVertical size={14} />
+                    </div>
+                  )}
+                  
+                  <div style={{
+                    width: '6px',
+                    height: '6px',
+                    borderRadius: '50%',
+                    background: '#8B5CF6',
+                    marginTop: '8px',
+                    flexShrink: 0
+                  }} />
+                  
+                  {isEditingThisBullet ? (
+                    <input
+                      type="text"
+                      value={bullet}
+                      onChange={(e) => setCurrentSOP(prev => ({
+                        ...prev,
+                        steps: prev.steps.map((s, si) => 
+                          si === stepIndex ? {
+                            ...s,
+                            bullets: s.bullets.map((b, bi) => 
+                              bi === bulletIndex ? e.target.value : b
+                            )
+                          } : s
+                        )
+                      }))}
+                      onBlur={() => setEditingBullet(null)}
+                      onKeyDown={(e) => e.key === 'Enter' && setEditingBullet(null)}
+                      autoFocus
+                      style={{
+                        flex: 1,
+                        background: 'rgba(15, 23, 42, 0.8)',
+                        border: '1px solid #8B5CF6',
+                        borderRadius: '6px',
+                        padding: '6px 10px',
+                        color: '#E2E8F0',
+                        fontSize: '14px'
+                      }}
+                    />
+                  ) : (
+                    <span style={{ flex: 1, color: '#94A3B8', fontSize: '14px', lineHeight: '1.5' }}>
+                      {bullet}
+                    </span>
+                  )}
+                  
+                  {isEditable && (
+                    <div style={{ display: 'flex', gap: '4px' }}>
+                      {!isEditingThisBullet && (
+                        <button
+                          onClick={() => setEditingBullet({ stepIndex, bulletIndex })}
+                          style={{
+                            background: 'transparent',
+                            border: 'none',
+                            color: '#475569',
+                            cursor: 'pointer',
+                            padding: '2px'
+                          }}
+                        >
+                          <Edit3 size={14} />
+                        </button>
+                      )}
+                      <button
+                        onClick={() => addBullet(stepIndex, bulletIndex)}
+                        style={{
+                          background: 'transparent',
+                          border: 'none',
+                          color: '#10B981',
+                          cursor: 'pointer',
+                          padding: '2px'
+                        }}
+                        title="Add bullet below"
+                      >
+                        <PlusCircle size={14} />
+                      </button>
+                      <button
+                        onClick={() => deleteBullet(stepIndex, bulletIndex)}
+                        style={{
+                          background: 'transparent',
+                          border: 'none',
+                          color: '#EF4444',
+                          cursor: 'pointer',
+                          padding: '2px',
+                          opacity: step.bullets.length <= 1 ? 0.3 : 1
+                        }}
+                        disabled={step.bullets.length <= 1}
+                        title="Delete bullet"
+                      >
+                        <MinusCircle size={14} />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            
+            {/* Add step button */}
+            {isEditable && (
+              <div style={{ 
+                display: 'flex', 
+                justifyContent: 'space-between',
+                marginTop: '12px',
+                paddingTop: '12px',
+                borderTop: '1px dashed rgba(255,255,255,0.1)'
+              }}>
+                <button
+                  onClick={() => addStep(stepIndex)}
+                  style={{
+                    background: 'transparent',
+                    border: '1px dashed rgba(139, 92, 246, 0.5)',
+                    borderRadius: '8px',
+                    padding: '8px 16px',
+                    color: '#8B5CF6',
+                    fontSize: '13px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px'
+                  }}
+                >
+                  <Plus size={14} /> Add Step Below
+                </button>
+                
+                {currentSOP.steps.length > 1 && (
+                  <button
+                    onClick={() => deleteStep(stepIndex)}
+                    style={{
+                      background: 'transparent',
+                      border: '1px solid rgba(239, 68, 68, 0.3)',
+                      borderRadius: '8px',
+                      padding: '8px 16px',
+                      color: '#EF4444',
+                      fontSize: '13px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px'
+                    }}
+                  >
+                    <Trash2 size={14} /> Delete Step
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // LIBRARY VIEW
+  if (view === 'library') {
+    return (
+      <div style={{ padding: '32px', maxWidth: '1200px', margin: '0 auto' }}>
+        {/* Header */}
+        <div style={{ 
+          display: 'flex', 
+          justifyContent: 'space-between', 
+          alignItems: 'center',
+          marginBottom: '32px'
+        }}>
+          <div>
+            <h1 style={{ 
+              fontSize: '28px', 
+              fontWeight: '700', 
+              color: '#E2E8F0',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px'
+            }}>
+              <FileText size={32} color="#8B5CF6" />
+              Standard Operating Procedures
+            </h1>
+            <p style={{ color: '#64748B', marginTop: '4px' }}>
+              {filteredSOPs.length} procedure{filteredSOPs.length !== 1 ? 's' : ''} in library
+            </p>
+          </div>
+          
+          <button
+            onClick={() => { resetBuilder(); setView('builder'); }}
+            style={{
+              background: 'linear-gradient(135deg, #8B5CF6 0%, #6366F1 100%)',
+              border: 'none',
+              borderRadius: '12px',
+              padding: '14px 24px',
+              color: 'white',
+              fontWeight: '600',
+              fontSize: '15px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              boxShadow: '0 4px 15px rgba(139, 92, 246, 0.3)'
+            }}
+          >
+            <Plus size={20} /> Build New SOP
+          </button>
+        </div>
+
+        {/* Search and Filter */}
+        <div style={{ 
+          display: 'flex', 
+          gap: '16px', 
+          marginBottom: '24px'
+        }}>
+          <div style={{ 
+            flex: 1,
+            position: 'relative'
+          }}>
+            <Search size={18} style={{ 
+              position: 'absolute', 
+              left: '14px', 
+              top: '50%', 
+              transform: 'translateY(-50%)',
+              color: '#64748B'
+            }} />
+            <input
+              type="text"
+              placeholder="Search procedures..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              style={{
+                width: '100%',
+                background: 'rgba(30, 41, 59, 0.8)',
+                border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: '10px',
+                padding: '12px 12px 12px 44px',
+                color: 'white',
+                fontSize: '15px'
+              }}
+            />
+          </div>
+          
+          <select
+            value={filterDept}
+            onChange={(e) => setFilterDept(e.target.value)}
+            style={{
+              background: 'rgba(30, 41, 59, 0.8)',
+              border: '1px solid rgba(255,255,255,0.1)',
+              borderRadius: '10px',
+              padding: '12px 16px',
+              color: 'white',
+              fontSize: '15px',
+              minWidth: '200px',
+              cursor: 'pointer'
+            }}
+          >
+            <option value="all">All Departments</option>
+            {departments.map(dept => (
+              <option key={dept.id} value={dept.id}>{dept.name}</option>
+            ))}
+          </select>
+        </div>
+
+        {/* SOP List */}
+        {filteredSOPs.length === 0 ? (
+          <div style={{
+            background: 'rgba(30, 41, 59, 0.6)',
+            borderRadius: '16px',
+            padding: '60px',
+            textAlign: 'center'
+          }}>
+            <BookOpen size={48} color="#64748B" style={{ marginBottom: '16px' }} />
+            <h3 style={{ color: '#94A3B8', marginBottom: '8px' }}>No SOPs Found</h3>
+            <p style={{ color: '#64748B', marginBottom: '24px' }}>
+              {searchQuery || filterDept !== 'all' 
+                ? 'Try adjusting your search or filter'
+                : 'Create your first standard operating procedure'}
+            </p>
+            <button
+              onClick={() => { resetBuilder(); setView('builder'); }}
+              style={{
+                background: 'linear-gradient(135deg, #8B5CF6 0%, #6366F1 100%)',
+                border: 'none',
+                borderRadius: '10px',
+                padding: '12px 24px',
+                color: 'white',
+                fontWeight: '600',
+                cursor: 'pointer'
+              }}
+            >
+              Create First SOP
+            </button>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            {filteredSOPs.map(sop => (
+              <div 
+                key={sop.id}
+                style={{
+                  background: 'rgba(30, 41, 59, 0.6)',
+                  borderRadius: '16px',
+                  border: '1px solid rgba(255,255,255,0.06)',
+                  overflow: 'hidden'
+                }}
+              >
+                {/* SOP Header */}
+                <div 
+                  style={{
+                    padding: '20px 24px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '16px',
+                    cursor: 'pointer'
+                  }}
+                  onClick={() => setExpandedSOP(expandedSOP === sop.id ? null : sop.id)}
+                >
+                  <div style={{
+                    width: '48px',
+                    height: '48px',
+                    borderRadius: '12px',
+                    background: 'linear-gradient(135deg, #8B5CF6 0%, #6366F1 100%)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center'
+                  }}>
+                    <List size={24} color="white" />
+                  </div>
+                  
+                  <div style={{ flex: 1 }}>
+                    <h3 style={{ 
+                      color: '#E2E8F0', 
+                      fontSize: '18px',
+                      fontWeight: '600',
+                      marginBottom: '4px'
+                    }}>
+                      {sop.title}
+                    </h3>
+                    <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                      <span style={{
+                        background: 'rgba(139, 92, 246, 0.2)',
+                        color: '#A78BFA',
+                        padding: '2px 10px',
+                        borderRadius: '12px',
+                        fontSize: '12px'
+                      }}>
+                        {sop.departmentName}
+                      </span>
+                      <span style={{ color: '#64748B', fontSize: '13px' }}>
+                        {sop.steps?.length || 0} steps
+                      </span>
+                    </div>
+                  </div>
+                  
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); editSOP(sop); }}
+                      style={{
+                        background: 'rgba(59, 130, 246, 0.2)',
+                        border: 'none',
+                        borderRadius: '8px',
+                        padding: '8px 16px',
+                        color: '#60A5FA',
+                        fontSize: '13px',
+                        fontWeight: '500',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px'
+                      }}
+                    >
+                      <Edit3 size={14} /> Edit
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); deleteSOP(sop.id); }}
+                      style={{
+                        background: 'rgba(239, 68, 68, 0.2)',
+                        border: 'none',
+                        borderRadius: '8px',
+                        padding: '8px',
+                        color: '#F87171',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                    {expandedSOP === sop.id ? <ChevronDown size={20} color="#64748B" /> : <ChevronRight size={20} color="#64748B" />}
+                  </div>
+                </div>
+                
+                {/* Expanded View */}
+                {expandedSOP === sop.id && (
+                  <div style={{ 
+                    padding: '0 24px 24px',
+                    borderTop: '1px solid rgba(255,255,255,0.06)'
+                  }}>
+                    {sop.description && (
+                      <p style={{ 
+                        color: '#94A3B8', 
+                        padding: '16px 0',
+                        lineHeight: '1.6'
+                      }}>
+                        {sop.description}
+                      </p>
+                    )}
+                    
+                    {sop.steps?.map((step, idx) => renderStepEditor(step, idx, false))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // EDITOR VIEW (editing existing SOP)
+  if (view === 'editor' && currentSOP) {
+    return (
+      <div style={{ padding: '32px', maxWidth: '900px', margin: '0 auto' }}>
+        {/* Header */}
+        <div style={{ 
+          display: 'flex', 
+          justifyContent: 'space-between', 
+          alignItems: 'center',
+          marginBottom: '32px'
+        }}>
+          <button
+            onClick={() => { setView('library'); setCurrentSOP(null); }}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: '#94A3B8',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              fontSize: '15px'
+            }}
+          >
+            <ArrowLeft size={20} /> Back to Library
+          </button>
+          
+          <button
+            onClick={saveEditedSOP}
+            style={{
+              background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)',
+              border: 'none',
+              borderRadius: '10px',
+              padding: '12px 24px',
+              color: 'white',
+              fontWeight: '600',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px'
+            }}
+          >
+            <Save size={18} /> Save Changes
+          </button>
+        </div>
+
+        {/* SOP Title */}
+        <div style={{ marginBottom: '24px' }}>
+          {editingTitle ? (
+            <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+              <input
+                type="text"
+                value={tempTitle}
+                onChange={(e) => setTempTitle(e.target.value)}
+                autoFocus
+                style={{
+                  flex: 1,
+                  background: 'rgba(30, 41, 59, 0.8)',
+                  border: '2px solid #8B5CF6',
+                  borderRadius: '12px',
+                  padding: '14px 18px',
+                  color: 'white',
+                  fontSize: '24px',
+                  fontWeight: '700'
+                }}
+              />
+              <button
+                onClick={() => {
+                  setCurrentSOP(prev => ({ ...prev, title: tempTitle }));
+                  setEditingTitle(false);
+                }}
+                style={{
+                  background: '#10B981',
+                  border: 'none',
+                  borderRadius: '10px',
+                  padding: '12px',
+                  color: 'white',
+                  cursor: 'pointer'
+                }}
+              >
+                <Check size={20} />
+              </button>
+              <button
+                onClick={() => setEditingTitle(false)}
+                style={{
+                  background: 'rgba(239, 68, 68, 0.2)',
+                  border: 'none',
+                  borderRadius: '10px',
+                  padding: '12px',
+                  color: '#F87171',
+                  cursor: 'pointer'
+                }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+          ) : (
+            <div 
+              style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer' }}
+              onClick={() => { setTempTitle(currentSOP.title); setEditingTitle(true); }}
+            >
+              <h1 style={{ fontSize: '28px', fontWeight: '700', color: '#E2E8F0' }}>
+                {currentSOP.title}
+              </h1>
+              <Edit3 size={20} color="#64748B" />
+            </div>
+          )}
+          
+          <span style={{
+            display: 'inline-block',
+            background: 'rgba(139, 92, 246, 0.2)',
+            color: '#A78BFA',
+            padding: '4px 12px',
+            borderRadius: '12px',
+            fontSize: '13px',
+            marginTop: '8px'
+          }}>
+            {currentSOP.departmentName}
+          </span>
+        </div>
+
+        {/* Description */}
+        <div style={{ marginBottom: '32px' }}>
+          {editingDescription ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <textarea
+                value={tempDescription}
+                onChange={(e) => setTempDescription(e.target.value)}
+                autoFocus
+                rows={3}
+                style={{
+                  background: 'rgba(30, 41, 59, 0.8)',
+                  border: '2px solid #8B5CF6',
+                  borderRadius: '12px',
+                  padding: '14px 18px',
+                  color: 'white',
+                  fontSize: '15px',
+                  resize: 'vertical'
+                }}
+              />
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button
+                  onClick={() => {
+                    setCurrentSOP(prev => ({ ...prev, description: tempDescription }));
+                    setEditingDescription(false);
+                  }}
+                  style={{
+                    background: '#10B981',
+                    border: 'none',
+                    borderRadius: '8px',
+                    padding: '8px 16px',
+                    color: 'white',
+                    cursor: 'pointer',
+                    fontSize: '13px'
+                  }}
+                >
+                  Save
+                </button>
+                <button
+                  onClick={() => setEditingDescription(false)}
+                  style={{
+                    background: 'rgba(239, 68, 68, 0.2)',
+                    border: 'none',
+                    borderRadius: '8px',
+                    padding: '8px 16px',
+                    color: '#F87171',
+                    cursor: 'pointer',
+                    fontSize: '13px'
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div 
+              style={{ 
+                padding: '16px',
+                background: 'rgba(30, 41, 59, 0.4)',
+                borderRadius: '12px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: '12px'
+              }}
+              onClick={() => { setTempDescription(currentSOP.description || ''); setEditingDescription(true); }}
+            >
+              <p style={{ color: '#94A3B8', flex: 1, lineHeight: '1.6' }}>
+                {currentSOP.description || 'Click to add a description...'}
+              </p>
+              <Edit3 size={16} color="#64748B" style={{ flexShrink: 0, marginTop: '2px' }} />
+            </div>
+          )}
+        </div>
+
+        {/* Steps */}
+        <div>
+          <h2 style={{ 
+            fontSize: '18px', 
+            fontWeight: '600', 
+            color: '#E2E8F0',
+            marginBottom: '16px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px'
+          }}>
+            <List size={20} color="#8B5CF6" />
+            Procedure Steps
+            <span style={{ 
+              fontSize: '13px', 
+              color: '#64748B', 
+              fontWeight: '400',
+              marginLeft: '8px'
+            }}>
+              Drag to reorder
+            </span>
+          </h2>
+          
+          {currentSOP.steps?.map((step, idx) => renderStepEditor(step, idx, true))}
+          
+          <button
+            onClick={() => addStep(currentSOP.steps.length - 1)}
+            style={{
+              width: '100%',
+              background: 'transparent',
+              border: '2px dashed rgba(139, 92, 246, 0.3)',
+              borderRadius: '12px',
+              padding: '16px',
+              color: '#8B5CF6',
+              fontSize: '15px',
+              fontWeight: '500',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px',
+              marginTop: '16px'
+            }}
+          >
+            <Plus size={20} /> Add New Step
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // BUILDER VIEW
   return (
-    <div style={{ padding: '24px', maxWidth: '1200px', margin: '0 auto' }}>
+    <div style={{ padding: '32px', maxWidth: '900px', margin: '0 auto' }}>
       {/* Header */}
       <div style={{ 
         display: 'flex', 
         justifyContent: 'space-between', 
         alignItems: 'center',
-        marginBottom: '24px'
+        marginBottom: '32px'
       }}>
-        <div>
-          <h1 style={{ 
-            fontSize: '24px', 
-            fontWeight: '600', 
-            color: '#E2E8F0',
+        <button
+          onClick={() => { setView('library'); resetBuilder(); }}
+          style={{
+            background: 'transparent',
+            border: 'none',
+            color: '#94A3B8',
+            cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',
-            gap: '12px'
-          }}>
-            <FileText size={28} style={{ color: '#8B5CF6' }} />
-            {view === 'library' ? 'SOP Library' : 'SOP Builder'}
-          </h1>
-          <p style={{ color: '#64748B', marginTop: '4px' }}>
-            {view === 'library' 
-              ? 'Browse and manage your standard operating procedures'
-              : 'Create AI-powered procedures step by step'}
-          </p>
-        </div>
+            gap: '8px',
+            fontSize: '15px'
+          }}
+        >
+          <ArrowLeft size={20} /> Back to Library
+        </button>
         
-        <div style={{ display: 'flex', gap: '12px' }}>
-          {view === 'builder' && stage !== 4 && (
-            <button
-              onClick={() => setView('library')}
+        {/* Progress Indicator */}
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          {[1, 2, 3, 4].map(stage => (
+            <div 
+              key={stage}
               style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                padding: '10px 16px',
-                background: 'rgba(100, 116, 139, 0.3)',
-                border: '1px solid rgba(100, 116, 139, 0.3)',
-                borderRadius: '8px',
-                color: '#94A3B8',
-                cursor: 'pointer',
-                fontSize: '14px',
+                width: stage === builderStage ? '32px' : '12px',
+                height: '12px',
+                borderRadius: '6px',
+                background: stage <= builderStage 
+                  ? 'linear-gradient(135deg, #8B5CF6 0%, #6366F1 100%)' 
+                  : 'rgba(255,255,255,0.1)',
+                transition: 'all 0.3s ease'
               }}
-            >
-              <X size={16} />
-              Cancel
-            </button>
-          )}
-          
-          {view === 'library' && (
-            <button
-              onClick={startNewSOP}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                padding: '10px 20px',
-                background: 'linear-gradient(135deg, #8B5CF6, #7C3AED)',
-                border: 'none',
-                borderRadius: '8px',
-                color: 'white',
-                cursor: 'pointer',
-                fontSize: '14px',
-                fontWeight: '500',
-              }}
-            >
-              <Plus size={18} />
-              Build New SOP
-            </button>
-          )}
+            />
+          ))}
         </div>
       </div>
 
-      {/* Library View */}
-      {view === 'library' && (
+      {/* Stage 1: Describe */}
+      {builderStage === 1 && (
         <div>
-          {/* Search and Filter */}
+          <div style={{ textAlign: 'center', marginBottom: '40px' }}>
+            <Lightbulb size={48} color="#8B5CF6" style={{ marginBottom: '16px' }} />
+            <h2 style={{ fontSize: '24px', fontWeight: '700', color: '#E2E8F0', marginBottom: '8px' }}>
+              Describe Your Procedure
+            </h2>
+            <p style={{ color: '#64748B' }}>
+              Tell us what process you want to document
+            </p>
+          </div>
+          
           <div style={{ 
-            display: 'flex', 
-            gap: '12px', 
-            marginBottom: '20px',
-            flexWrap: 'wrap'
+            background: 'rgba(30, 41, 59, 0.6)',
+            borderRadius: '16px',
+            padding: '32px'
           }}>
-            <div style={{ 
-              flex: '1', 
-              minWidth: '200px',
-              position: 'relative' 
-            }}>
-              <Search 
-                size={16} 
-                style={{ 
-                  position: 'absolute', 
-                  left: '12px', 
-                  top: '50%', 
-                  transform: 'translateY(-50%)',
-                  color: '#64748B' 
-                }} 
-              />
-              <input
-                type="text"
-                placeholder="Search SOPs..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                style={{
-                  width: '100%',
-                  padding: '10px 12px 10px 36px',
-                  background: 'rgba(30, 41, 59, 0.8)',
-                  border: '1px solid rgba(255,255,255,0.1)',
-                  borderRadius: '8px',
-                  color: '#E2E8F0',
-                  fontSize: '14px',
-                }}
-              />
-            </div>
-            
+            <label style={{ display: 'block', marginBottom: '8px', color: '#94A3B8', fontSize: '14px' }}>
+              Department
+            </label>
             <select
-              value={filterDept}
-              onChange={(e) => setFilterDept(e.target.value)}
+              value={selectedDept}
+              onChange={(e) => setSelectedDept(e.target.value)}
               style={{
-                padding: '10px 12px',
-                background: 'rgba(30, 41, 59, 0.8)',
+                width: '100%',
+                background: 'rgba(15, 23, 42, 0.8)',
                 border: '1px solid rgba(255,255,255,0.1)',
-                borderRadius: '8px',
-                color: '#E2E8F0',
-                fontSize: '14px',
-                minWidth: '180px',
+                borderRadius: '10px',
+                padding: '14px 16px',
+                color: 'white',
+                fontSize: '15px',
+                marginBottom: '24px',
+                cursor: 'pointer'
               }}
             >
-              <option value="">All Departments</option>
-              {departments.map(d => (
-                <option key={d.id} value={d.id}>{d.name}</option>
+              <option value="">Select a department...</option>
+              {departments.map(dept => (
+                <option key={dept.id} value={dept.id}>{dept.name}</option>
               ))}
             </select>
-          </div>
-
-          {/* SOP List */}
-          {filteredSOPs.length === 0 ? (
-            <div style={{
-              textAlign: 'center',
-              padding: '60px 20px',
-              background: 'rgba(30, 41, 59, 0.5)',
-              borderRadius: '12px',
-              border: '1px solid rgba(255,255,255,0.06)',
-            }}>
-              <FileText size={48} style={{ color: '#64748B', marginBottom: '16px' }} />
-              <h3 style={{ color: '#94A3B8', marginBottom: '8px' }}>No SOPs Found</h3>
-              <p style={{ color: '#64748B', marginBottom: '20px' }}>
-                {searchTerm || filterDept 
-                  ? 'Try adjusting your search or filters'
-                  : 'Create your first standard operating procedure'}
-              </p>
-              {!searchTerm && !filterDept && (
-                <button
-                  onClick={startNewSOP}
-                  style={{
-                    padding: '10px 20px',
-                    background: 'linear-gradient(135deg, #8B5CF6, #7C3AED)',
-                    border: 'none',
-                    borderRadius: '8px',
-                    color: 'white',
-                    cursor: 'pointer',
-                    fontSize: '14px',
-                  }}
-                >
-                  Create First SOP
-                </button>
+            
+            <label style={{ display: 'block', marginBottom: '8px', color: '#94A3B8', fontSize: '14px' }}>
+              What procedure do you want to create?
+            </label>
+            <textarea
+              value={sopIdea}
+              onChange={(e) => setSopIdea(e.target.value)}
+              placeholder="e.g., How to handle a customer complaint about project delays..."
+              rows={4}
+              style={{
+                width: '100%',
+                background: 'rgba(15, 23, 42, 0.8)',
+                border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: '10px',
+                padding: '14px 16px',
+                color: 'white',
+                fontSize: '15px',
+                resize: 'vertical',
+                marginBottom: '24px'
+              }}
+            />
+            
+            <button
+              onClick={generateQuestions}
+              disabled={!sopIdea.trim() || !selectedDept || isGeneratingQuestions}
+              style={{
+                width: '100%',
+                background: !sopIdea.trim() || !selectedDept 
+                  ? 'rgba(139, 92, 246, 0.3)'
+                  : 'linear-gradient(135deg, #8B5CF6 0%, #6366F1 100%)',
+                border: 'none',
+                borderRadius: '12px',
+                padding: '16px',
+                color: 'white',
+                fontWeight: '600',
+                fontSize: '16px',
+                cursor: sopIdea.trim() && selectedDept ? 'pointer' : 'not-allowed',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '10px'
+              }}
+            >
+              {isGeneratingQuestions ? (
+                <>
+                  <Loader size={20} className="animate-spin" style={{ animation: 'spin 1s linear infinite' }} />
+                  Generating Questions...
+                </>
+              ) : (
+                <>
+                  <Sparkles size={20} />
+                  Generate Questions
+                </>
               )}
-            </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {filteredSOPs.map(sop => (
-                <div
-                  key={sop.id}
-                  style={{
-                    background: 'rgba(30, 41, 59, 0.8)',
-                    borderRadius: '12px',
-                    border: '1px solid rgba(255,255,255,0.06)',
-                    overflow: 'hidden',
-                  }}
-                >
-                  {/* SOP Header */}
-                  <div
-                    onClick={() => setExpandedSOP(expandedSOP === sop.id ? null : sop.id)}
-                    style={{
-                      padding: '16px 20px',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                    }}
-                  >
-                    <div style={{ flex: 1 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '4px' }}>
-                        <h3 style={{ color: '#E2E8F0', fontSize: '16px', fontWeight: '500' }}>
-                          {sop.title}
-                        </h3>
-                        <span style={{
-                          padding: '2px 8px',
-                          background: 'rgba(139, 92, 246, 0.2)',
-                          borderRadius: '4px',
-                          fontSize: '11px',
-                          color: '#A78BFA',
-                        }}>
-                          {sop.steps?.length || 0} steps
-                        </span>
-                      </div>
-                      <p style={{ color: '#64748B', fontSize: '13px' }}>
-                        {sop.departmentName} • Created {new Date(sop.createdAt).toLocaleDateString()}
-                      </p>
-                    </div>
-                    
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); deleteSOP(sop.id); }}
-                        style={{
-                          padding: '6px',
-                          background: 'rgba(239, 68, 68, 0.1)',
-                          border: 'none',
-                          borderRadius: '6px',
-                          color: '#EF4444',
-                          cursor: 'pointer',
-                        }}
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                      {expandedSOP === sop.id ? <ChevronUp size={20} color="#64748B" /> : <ChevronDown size={20} color="#64748B" />}
-                    </div>
-                  </div>
-
-                  {/* Expanded Content */}
-                  {expandedSOP === sop.id && (
-                    <div style={{ 
-                      padding: '0 20px 20px',
-                      borderTop: '1px solid rgba(255,255,255,0.06)',
-                    }}>
-                      <p style={{ color: '#94A3B8', fontSize: '14px', margin: '16px 0' }}>
-                        {sop.description}
-                      </p>
-                      
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                        {sop.steps?.map((step, idx) => (
-                          <div
-                            key={idx}
-                            style={{
-                              padding: '12px 16px',
-                              background: 'rgba(15, 23, 42, 0.5)',
-                              borderRadius: '8px',
-                              borderLeft: '3px solid #8B5CF6',
-                            }}
-                          >
-                            <div style={{ 
-                              display: 'flex', 
-                              alignItems: 'center', 
-                              gap: '8px',
-                              marginBottom: '6px'
-                            }}>
-                              <span style={{
-                                width: '24px',
-                                height: '24px',
-                                borderRadius: '50%',
-                                background: 'rgba(139, 92, 246, 0.2)',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                fontSize: '12px',
-                                color: '#A78BFA',
-                                fontWeight: '600',
-                              }}>
-                                {step.number}
-                              </span>
-                              <span style={{ color: '#E2E8F0', fontWeight: '500' }}>
-                                {step.title}
-                              </span>
-                            </div>
-                            <p style={{ color: '#94A3B8', fontSize: '13px', marginLeft: '32px' }}>
-                              {step.instructions}
-                            </p>
-                            {step.notes && (
-                              <p style={{ 
-                                color: '#F59E0B', 
-                                fontSize: '12px', 
-                                marginLeft: '32px',
-                                marginTop: '6px',
-                                fontStyle: 'italic'
-                              }}>
-                                ⚠️ {step.notes}
-                              </p>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
+            </button>
+          </div>
         </div>
       )}
 
-      {/* Builder View */}
-      {view === 'builder' && (
+      {/* Stage 2: Answer Questions */}
+      {builderStage === 2 && (
         <div>
-          {/* Progress Indicator */}
-          <div style={{ 
-            display: 'flex', 
-            justifyContent: 'center',
-            marginBottom: '32px',
-          }}>
-            {[
-              { num: 1, label: 'Describe' },
-              { num: 2, label: 'Answer' },
-              { num: 3, label: 'Review' },
-              { num: 4, label: 'Saved' },
-            ].map((s, idx) => (
-              <div 
-                key={s.num}
-                style={{ display: 'flex', alignItems: 'center' }}
-              >
-                <div style={{
-                  width: '36px',
-                  height: '36px',
-                  borderRadius: '50%',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  background: stage >= s.num 
-                    ? 'linear-gradient(135deg, #8B5CF6, #7C3AED)' 
-                    : 'rgba(100, 116, 139, 0.3)',
-                  color: stage >= s.num ? 'white' : '#64748B',
-                  fontWeight: '600',
-                  fontSize: '14px',
-                }}>
-                  {stage > s.num ? <Check size={18} /> : s.num}
-                </div>
-                <span style={{ 
-                  marginLeft: '8px', 
-                  color: stage >= s.num ? '#E2E8F0' : '#64748B',
-                  fontSize: '13px',
-                }}>
-                  {s.label}
-                </span>
-                {idx < 3 && (
-                  <div style={{
-                    width: '60px',
-                    height: '2px',
-                    background: stage > s.num ? '#8B5CF6' : 'rgba(100, 116, 139, 0.3)',
-                    margin: '0 12px',
-                  }} />
-                )}
-              </div>
-            ))}
+          <div style={{ textAlign: 'center', marginBottom: '40px' }}>
+            <h2 style={{ fontSize: '24px', fontWeight: '700', color: '#E2E8F0', marginBottom: '8px' }}>
+              Answer a Few Questions
+            </h2>
+            <p style={{ color: '#64748B' }}>
+              This helps create a more detailed and accurate SOP
+            </p>
           </div>
-
-          {/* Error Message */}
-          {error && (
-            <div style={{
-              padding: '12px 16px',
-              background: 'rgba(239, 68, 68, 0.1)',
-              border: '1px solid rgba(239, 68, 68, 0.3)',
-              borderRadius: '8px',
-              color: '#EF4444',
-              marginBottom: '20px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-            }}>
-              <AlertCircle size={18} />
-              {error}
-            </div>
-          )}
-
-          {/* Stage 1: Describe */}
-          {stage === 1 && (
-            <div style={{
-              background: 'rgba(30, 41, 59, 0.8)',
-              borderRadius: '12px',
-              padding: '24px',
-              border: '1px solid rgba(255,255,255,0.06)',
-            }}>
-              <h2 style={{ color: '#E2E8F0', marginBottom: '20px', fontSize: '18px' }}>
-                <Sparkles size={20} style={{ marginRight: '8px', color: '#8B5CF6' }} />
-                Describe Your Procedure
-              </h2>
-              
-              <div style={{ marginBottom: '20px' }}>
-                <label style={{ color: '#94A3B8', fontSize: '13px', display: 'block', marginBottom: '8px' }}>
-                  Department *
+          
+          <div style={{ 
+            background: 'rgba(30, 41, 59, 0.6)',
+            borderRadius: '16px',
+            padding: '32px'
+          }}>
+            {questions.map((q, idx) => (
+              <div key={idx} style={{ marginBottom: '24px' }}>
+                <label style={{ 
+                  display: 'block', 
+                  marginBottom: '8px', 
+                  color: '#E2E8F0',
+                  fontSize: '15px',
+                  fontWeight: '500'
+                }}>
+                  {q.question}
+                  {q.required && <span style={{ color: '#EF4444' }}> *</span>}
                 </label>
-                <select
-                  value={selectedDept}
-                  onChange={(e) => setSelectedDept(e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '12px',
-                    background: 'rgba(15, 23, 42, 0.5)',
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    borderRadius: '8px',
-                    color: '#E2E8F0',
-                    fontSize: '14px',
-                  }}
-                >
-                  <option value="">Select department...</option>
-                  {departments.map(d => (
-                    <option key={d.id} value={d.id}>{d.name}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div style={{ marginBottom: '24px' }}>
-                <label style={{ color: '#94A3B8', fontSize: '13px', display: 'block', marginBottom: '8px' }}>
-                  What procedure do you want to document? *
-                </label>
+                {q.hint && (
+                  <p style={{ color: '#64748B', fontSize: '13px', marginBottom: '8px' }}>
+                    {q.hint}
+                  </p>
+                )}
                 <textarea
-                  value={sopDescription}
-                  onChange={(e) => setSopDescription(e.target.value)}
-                  placeholder="e.g., How to conduct a pre-job site inspection, How to process a change order, How to onboard a new subcontractor..."
+                  value={answers[idx] || ''}
+                  onChange={(e) => setAnswers(prev => ({ ...prev, [idx]: e.target.value }))}
+                  rows={2}
                   style={{
                     width: '100%',
-                    padding: '12px',
-                    background: 'rgba(15, 23, 42, 0.5)',
+                    background: 'rgba(15, 23, 42, 0.8)',
                     border: '1px solid rgba(255,255,255,0.1)',
-                    borderRadius: '8px',
-                    color: '#E2E8F0',
+                    borderRadius: '10px',
+                    padding: '12px 14px',
+                    color: 'white',
                     fontSize: '14px',
-                    minHeight: '120px',
-                    resize: 'vertical',
+                    resize: 'vertical'
                   }}
                 />
-                <p style={{ color: '#64748B', fontSize: '12px', marginTop: '8px' }}>
-                  Be specific about what the procedure accomplishes and who performs it.
-                </p>
               </div>
-
+            ))}
+            
+            <div style={{ display: 'flex', gap: '12px', marginTop: '32px' }}>
               <button
-                onClick={generateQuestions}
-                disabled={isLoading || !sopDescription.trim() || !selectedDept}
+                onClick={() => setBuilderStage(1)}
                 style={{
+                  background: 'rgba(255,255,255,0.1)',
+                  border: 'none',
+                  borderRadius: '10px',
+                  padding: '14px 24px',
+                  color: '#94A3B8',
+                  fontWeight: '500',
+                  cursor: 'pointer'
+                }}
+              >
+                Back
+              </button>
+              <button
+                onClick={generateSOP}
+                disabled={isGeneratingSOP}
+                style={{
+                  flex: 1,
+                  background: 'linear-gradient(135deg, #8B5CF6 0%, #6366F1 100%)',
+                  border: 'none',
+                  borderRadius: '12px',
+                  padding: '16px',
+                  color: 'white',
+                  fontWeight: '600',
+                  fontSize: '16px',
+                  cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  gap: '8px',
-                  width: '100%',
-                  padding: '14px',
-                  background: isLoading || !sopDescription.trim() || !selectedDept
-                    ? 'rgba(100, 116, 139, 0.3)'
-                    : 'linear-gradient(135deg, #8B5CF6, #7C3AED)',
-                  border: 'none',
-                  borderRadius: '8px',
-                  color: 'white',
-                  cursor: isLoading || !sopDescription.trim() || !selectedDept ? 'not-allowed' : 'pointer',
-                  fontSize: '15px',
-                  fontWeight: '500',
+                  gap: '10px'
                 }}
               >
-                {isLoading ? (
+                {isGeneratingSOP ? (
                   <>
-                    <Loader size={18} style={{ animation: 'spin 1s linear infinite' }} />
-                    Generating Questions...
+                    <Loader size={20} style={{ animation: 'spin 1s linear infinite' }} />
+                    Generating SOP...
                   </>
                 ) : (
                   <>
-                    Generate Questions
-                    <ArrowRight size={18} />
+                    <Sparkles size={20} />
+                    Generate SOP
                   </>
                 )}
               </button>
             </div>
-          )}
-
-          {/* Stage 2: Answer Questions */}
-          {stage === 2 && (
-            <div style={{
-              background: 'rgba(30, 41, 59, 0.8)',
-              borderRadius: '12px',
-              padding: '24px',
-              border: '1px solid rgba(255,255,255,0.06)',
-            }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                <h2 style={{ color: '#E2E8F0', fontSize: '18px' }}>
-                  <ListOrdered size={20} style={{ marginRight: '8px', color: '#8B5CF6' }} />
-                  Answer These Questions
-                </h2>
-                <span style={{ color: '#64748B', fontSize: '13px' }}>
-                  {answeredCount} / {questions.length} answered
-                </span>
-              </div>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', marginBottom: '24px' }}>
-                {questions.map((q, idx) => (
-                  <div key={q.id}>
-                    <label style={{ 
-                      color: '#E2E8F0', 
-                      fontSize: '14px', 
-                      display: 'block', 
-                      marginBottom: '8px' 
-                    }}>
-                      {idx + 1}. {q.question}
-                      {q.required && <span style={{ color: '#EF4444', marginLeft: '4px' }}>*</span>}
-                    </label>
-                    {q.hint && (
-                      <p style={{ color: '#64748B', fontSize: '12px', marginBottom: '8px' }}>
-                        💡 {q.hint}
-                      </p>
-                    )}
-                    <textarea
-                      value={answers[q.id] || ''}
-                      onChange={(e) => setAnswers(prev => ({ ...prev, [q.id]: e.target.value }))}
-                      placeholder="Type your answer..."
-                      style={{
-                        width: '100%',
-                        padding: '12px',
-                        background: 'rgba(15, 23, 42, 0.5)',
-                        border: `1px solid ${answers[q.id]?.trim() ? 'rgba(139, 92, 246, 0.3)' : 'rgba(255,255,255,0.1)'}`,
-                        borderRadius: '8px',
-                        color: '#E2E8F0',
-                        fontSize: '14px',
-                        minHeight: '80px',
-                        resize: 'vertical',
-                      }}
-                    />
-                  </div>
-                ))}
-              </div>
-
-              <div style={{ display: 'flex', gap: '12px' }}>
-                <button
-                  onClick={() => setStage(1)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    padding: '12px 20px',
-                    background: 'rgba(100, 116, 139, 0.3)',
-                    border: '1px solid rgba(100, 116, 139, 0.3)',
-                    borderRadius: '8px',
-                    color: '#94A3B8',
-                    cursor: 'pointer',
-                    fontSize: '14px',
-                  }}
-                >
-                  <ArrowLeft size={16} />
-                  Back
-                </button>
-                
-                <button
-                  onClick={generateSOP}
-                  disabled={isLoading}
-                  style={{
-                    flex: 1,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '8px',
-                    padding: '12px',
-                    background: isLoading ? 'rgba(100, 116, 139, 0.3)' : 'linear-gradient(135deg, #8B5CF6, #7C3AED)',
-                    border: 'none',
-                    borderRadius: '8px',
-                    color: 'white',
-                    cursor: isLoading ? 'not-allowed' : 'pointer',
-                    fontSize: '15px',
-                    fontWeight: '500',
-                  }}
-                >
-                  {isLoading ? (
-                    <>
-                      <Loader size={18} style={{ animation: 'spin 1s linear infinite' }} />
-                      Generating SOP...
-                    </>
-                  ) : (
-                    <>
-                      Generate SOP
-                      <ArrowRight size={18} />
-                    </>
-                  )}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Stage 3: Review */}
-          {stage === 3 && generatedSOP && (
-            <div style={{
-              background: 'rgba(30, 41, 59, 0.8)',
-              borderRadius: '12px',
-              padding: '24px',
-              border: '1px solid rgba(255,255,255,0.06)',
-            }}>
-              <h2 style={{ color: '#E2E8F0', marginBottom: '20px', fontSize: '18px' }}>
-                <Edit3 size={20} style={{ marginRight: '8px', color: '#8B5CF6' }} />
-                Review & Edit Your SOP
-              </h2>
-
-              {/* Title */}
-              <div style={{ marginBottom: '16px' }}>
-                <label style={{ color: '#94A3B8', fontSize: '12px', display: 'block', marginBottom: '6px' }}>
-                  Title
-                </label>
-                <input
-                  type="text"
-                  value={generatedSOP.title}
-                  onChange={(e) => setGeneratedSOP(prev => ({ ...prev, title: e.target.value }))}
-                  style={{
-                    width: '100%',
-                    padding: '12px',
-                    background: 'rgba(15, 23, 42, 0.5)',
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    borderRadius: '8px',
-                    color: '#E2E8F0',
-                    fontSize: '16px',
-                    fontWeight: '500',
-                  }}
-                />
-              </div>
-
-              {/* Description */}
-              <div style={{ marginBottom: '24px' }}>
-                <label style={{ color: '#94A3B8', fontSize: '12px', display: 'block', marginBottom: '6px' }}>
-                  Description
-                </label>
-                <textarea
-                  value={generatedSOP.description}
-                  onChange={(e) => setGeneratedSOP(prev => ({ ...prev, description: e.target.value }))}
-                  style={{
-                    width: '100%',
-                    padding: '12px',
-                    background: 'rgba(15, 23, 42, 0.5)',
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    borderRadius: '8px',
-                    color: '#E2E8F0',
-                    fontSize: '14px',
-                    minHeight: '60px',
-                  }}
-                />
-              </div>
-
-              {/* Steps */}
-              <div style={{ marginBottom: '20px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                  <label style={{ color: '#94A3B8', fontSize: '12px' }}>
-                    Steps ({generatedSOP.steps.length})
-                  </label>
-                  <button
-                    onClick={addStep}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '4px',
-                      padding: '6px 12px',
-                      background: 'rgba(139, 92, 246, 0.2)',
-                      border: 'none',
-                      borderRadius: '6px',
-                      color: '#A78BFA',
-                      cursor: 'pointer',
-                      fontSize: '12px',
-                    }}
-                  >
-                    <Plus size={14} />
-                    Add Step
-                  </button>
-                </div>
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  {generatedSOP.steps.map((step, idx) => (
-                    <div
-                      key={idx}
-                      style={{
-                        padding: '16px',
-                        background: 'rgba(15, 23, 42, 0.5)',
-                        borderRadius: '8px',
-                        border: editingStep === idx ? '1px solid #8B5CF6' : '1px solid rgba(255,255,255,0.06)',
-                      }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
-                        <span style={{
-                          width: '28px',
-                          height: '28px',
-                          borderRadius: '50%',
-                          background: 'rgba(139, 92, 246, 0.2)',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          fontSize: '13px',
-                          color: '#A78BFA',
-                          fontWeight: '600',
-                        }}>
-                          {step.number}
-                        </span>
-                        <input
-                          type="text"
-                          value={step.title}
-                          onChange={(e) => updateStep(idx, 'title', e.target.value)}
-                          placeholder="Step title"
-                          style={{
-                            flex: 1,
-                            padding: '8px 12px',
-                            background: 'rgba(30, 41, 59, 0.5)',
-                            border: '1px solid rgba(255,255,255,0.1)',
-                            borderRadius: '6px',
-                            color: '#E2E8F0',
-                            fontSize: '14px',
-                            fontWeight: '500',
-                          }}
-                        />
-                        <button
-                          onClick={() => removeStep(idx)}
-                          disabled={generatedSOP.steps.length <= 1}
-                          style={{
-                            padding: '6px',
-                            background: 'rgba(239, 68, 68, 0.1)',
-                            border: 'none',
-                            borderRadius: '6px',
-                            color: generatedSOP.steps.length <= 1 ? '#64748B' : '#EF4444',
-                            cursor: generatedSOP.steps.length <= 1 ? 'not-allowed' : 'pointer',
-                          }}
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                      
-                      <textarea
-                        value={step.instructions}
-                        onChange={(e) => updateStep(idx, 'instructions', e.target.value)}
-                        placeholder="Instructions for this step..."
-                        style={{
-                          width: '100%',
-                          padding: '10px 12px',
-                          background: 'rgba(30, 41, 59, 0.5)',
-                          border: '1px solid rgba(255,255,255,0.1)',
-                          borderRadius: '6px',
-                          color: '#E2E8F0',
-                          fontSize: '13px',
-                          minHeight: '60px',
-                          marginBottom: '8px',
-                          resize: 'vertical',
-                        }}
-                      />
-                      
-                      <input
-                        type="text"
-                        value={step.notes || ''}
-                        onChange={(e) => updateStep(idx, 'notes', e.target.value)}
-                        placeholder="Notes, warnings, or tips (optional)"
-                        style={{
-                          width: '100%',
-                          padding: '8px 12px',
-                          background: 'rgba(245, 158, 11, 0.1)',
-                          border: '1px solid rgba(245, 158, 11, 0.2)',
-                          borderRadius: '6px',
-                          color: '#F59E0B',
-                          fontSize: '12px',
-                        }}
-                      />
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', gap: '12px' }}>
-                <button
-                  onClick={() => setStage(2)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    padding: '12px 20px',
-                    background: 'rgba(100, 116, 139, 0.3)',
-                    border: '1px solid rgba(100, 116, 139, 0.3)',
-                    borderRadius: '8px',
-                    color: '#94A3B8',
-                    cursor: 'pointer',
-                    fontSize: '14px',
-                  }}
-                >
-                  <ArrowLeft size={16} />
-                  Back
-                </button>
-                
-                <button
-                  onClick={saveSOP}
-                  style={{
-                    flex: 1,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '8px',
-                    padding: '12px',
-                    background: 'linear-gradient(135deg, #10B981, #059669)',
-                    border: 'none',
-                    borderRadius: '8px',
-                    color: 'white',
-                    cursor: 'pointer',
-                    fontSize: '15px',
-                    fontWeight: '500',
-                  }}
-                >
-                  <Save size={18} />
-                  Save to Knowledge Base
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Stage 4: Saved */}
-          {stage === 4 && (
-            <div style={{
-              background: 'rgba(30, 41, 59, 0.8)',
-              borderRadius: '12px',
-              padding: '40px',
-              border: '1px solid rgba(255,255,255,0.06)',
-              textAlign: 'center',
-            }}>
-              <div style={{
-                width: '64px',
-                height: '64px',
-                borderRadius: '50%',
-                background: 'linear-gradient(135deg, #10B981, #059669)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                margin: '0 auto 20px',
-              }}>
-                <CheckCircle size={32} color="white" />
-              </div>
-              
-              <h2 style={{ color: '#E2E8F0', marginBottom: '8px' }}>
-                SOP Created Successfully!
-              </h2>
-              <p style={{ color: '#64748B', marginBottom: '24px' }}>
-                Your procedure has been saved to the Knowledge Base and is ready to use.
-              </p>
-              
-              <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
-                <button
-                  onClick={() => setView('library')}
-                  style={{
-                    padding: '12px 24px',
-                    background: 'rgba(139, 92, 246, 0.2)',
-                    border: '1px solid rgba(139, 92, 246, 0.3)',
-                    borderRadius: '8px',
-                    color: '#A78BFA',
-                    cursor: 'pointer',
-                    fontSize: '14px',
-                  }}
-                >
-                  View Library
-                </button>
-                <button
-                  onClick={startNewSOP}
-                  style={{
-                    padding: '12px 24px',
-                    background: 'linear-gradient(135deg, #8B5CF6, #7C3AED)',
-                    border: 'none',
-                    borderRadius: '8px',
-                    color: 'white',
-                    cursor: 'pointer',
-                    fontSize: '14px',
-                  }}
-                >
-                  Create Another SOP
-                </button>
-              </div>
-            </div>
-          )}
+          </div>
         </div>
       )}
 
-      {/* CSS for spinner animation */}
+      {/* Stage 3: Review & Edit */}
+      {builderStage === 3 && currentSOP && (
+        <div>
+          <div style={{ textAlign: 'center', marginBottom: '32px' }}>
+            <h2 style={{ fontSize: '24px', fontWeight: '700', color: '#E2E8F0', marginBottom: '8px' }}>
+              Review & Edit Your SOP
+            </h2>
+            <p style={{ color: '#64748B' }}>
+              Edit any section, drag steps to reorder
+            </p>
+          </div>
+
+          {/* Title */}
+          <div style={{ marginBottom: '24px' }}>
+            {editingTitle ? (
+              <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                <input
+                  type="text"
+                  value={tempTitle}
+                  onChange={(e) => setTempTitle(e.target.value)}
+                  autoFocus
+                  style={{
+                    flex: 1,
+                    background: 'rgba(30, 41, 59, 0.8)',
+                    border: '2px solid #8B5CF6',
+                    borderRadius: '12px',
+                    padding: '14px 18px',
+                    color: 'white',
+                    fontSize: '24px',
+                    fontWeight: '700'
+                  }}
+                />
+                <button
+                  onClick={() => {
+                    setCurrentSOP(prev => ({ ...prev, title: tempTitle }));
+                    setEditingTitle(false);
+                  }}
+                  style={{
+                    background: '#10B981',
+                    border: 'none',
+                    borderRadius: '10px',
+                    padding: '12px',
+                    color: 'white',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <Check size={20} />
+                </button>
+                <button
+                  onClick={() => setEditingTitle(false)}
+                  style={{
+                    background: 'rgba(239, 68, 68, 0.2)',
+                    border: 'none',
+                    borderRadius: '10px',
+                    padding: '12px',
+                    color: '#F87171',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <X size={20} />
+                </button>
+              </div>
+            ) : (
+              <div 
+                style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer' }}
+                onClick={() => { setTempTitle(currentSOP.title); setEditingTitle(true); }}
+              >
+                <h1 style={{ fontSize: '28px', fontWeight: '700', color: '#E2E8F0' }}>
+                  {currentSOP.title}
+                </h1>
+                <Edit3 size={20} color="#64748B" />
+              </div>
+            )}
+          </div>
+
+          {/* Description */}
+          <div style={{ marginBottom: '32px' }}>
+            {editingDescription ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <textarea
+                  value={tempDescription}
+                  onChange={(e) => setTempDescription(e.target.value)}
+                  autoFocus
+                  rows={3}
+                  style={{
+                    background: 'rgba(30, 41, 59, 0.8)',
+                    border: '2px solid #8B5CF6',
+                    borderRadius: '12px',
+                    padding: '14px 18px',
+                    color: 'white',
+                    fontSize: '15px',
+                    resize: 'vertical'
+                  }}
+                />
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    onClick={() => {
+                      setCurrentSOP(prev => ({ ...prev, description: tempDescription }));
+                      setEditingDescription(false);
+                    }}
+                    style={{
+                      background: '#10B981',
+                      border: 'none',
+                      borderRadius: '8px',
+                      padding: '8px 16px',
+                      color: 'white',
+                      cursor: 'pointer',
+                      fontSize: '13px'
+                    }}
+                  >
+                    Save
+                  </button>
+                  <button
+                    onClick={() => setEditingDescription(false)}
+                    style={{
+                      background: 'rgba(239, 68, 68, 0.2)',
+                      border: 'none',
+                      borderRadius: '8px',
+                      padding: '8px 16px',
+                      color: '#F87171',
+                      cursor: 'pointer',
+                      fontSize: '13px'
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div 
+                style={{ 
+                  padding: '16px',
+                  background: 'rgba(30, 41, 59, 0.4)',
+                  borderRadius: '12px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: '12px'
+                }}
+                onClick={() => { setTempDescription(currentSOP.description || ''); setEditingDescription(true); }}
+              >
+                <p style={{ color: '#94A3B8', flex: 1, lineHeight: '1.6' }}>
+                  {currentSOP.description}
+                </p>
+                <Edit3 size={16} color="#64748B" style={{ flexShrink: 0, marginTop: '2px' }} />
+              </div>
+            )}
+          </div>
+
+          {/* Steps */}
+          <div style={{ marginBottom: '32px' }}>
+            <h2 style={{ 
+              fontSize: '18px', 
+              fontWeight: '600', 
+              color: '#E2E8F0',
+              marginBottom: '16px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px'
+            }}>
+              <List size={20} color="#8B5CF6" />
+              Procedure Steps
+            </h2>
+            
+            {currentSOP.steps?.map((step, idx) => renderStepEditor(step, idx, true))}
+            
+            <button
+              onClick={() => addStep(currentSOP.steps.length - 1)}
+              style={{
+                width: '100%',
+                background: 'transparent',
+                border: '2px dashed rgba(139, 92, 246, 0.3)',
+                borderRadius: '12px',
+                padding: '16px',
+                color: '#8B5CF6',
+                fontSize: '15px',
+                fontWeight: '500',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px'
+              }}
+            >
+              <Plus size={20} /> Add New Step
+            </button>
+          </div>
+
+          {/* Actions */}
+          <div style={{ display: 'flex', gap: '12px' }}>
+            <button
+              onClick={() => setBuilderStage(2)}
+              style={{
+                background: 'rgba(255,255,255,0.1)',
+                border: 'none',
+                borderRadius: '10px',
+                padding: '14px 24px',
+                color: '#94A3B8',
+                fontWeight: '500',
+                cursor: 'pointer'
+              }}
+            >
+              Back
+            </button>
+            <button
+              onClick={saveSOP}
+              style={{
+                flex: 1,
+                background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)',
+                border: 'none',
+                borderRadius: '12px',
+                padding: '16px',
+                color: 'white',
+                fontWeight: '600',
+                fontSize: '16px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '10px'
+              }}
+            >
+              <Save size={20} />
+              Save to Knowledge Base
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Stage 4: Success */}
+      {builderStage === 4 && (
+        <div style={{ textAlign: 'center', padding: '60px 0' }}>
+          <div style={{
+            width: '80px',
+            height: '80px',
+            borderRadius: '50%',
+            background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            margin: '0 auto 24px'
+          }}>
+            <Check size={40} color="white" />
+          </div>
+          
+          <h2 style={{ fontSize: '28px', fontWeight: '700', color: '#E2E8F0', marginBottom: '12px' }}>
+            SOP Created Successfully!
+          </h2>
+          <p style={{ color: '#64748B', marginBottom: '32px' }}>
+            Your procedure has been saved to the Knowledge Base
+          </p>
+          
+          <div style={{ display: 'flex', gap: '16px', justifyContent: 'center' }}>
+            <button
+              onClick={() => setView('library')}
+              style={{
+                background: 'rgba(139, 92, 246, 0.2)',
+                border: 'none',
+                borderRadius: '10px',
+                padding: '14px 28px',
+                color: '#A78BFA',
+                fontWeight: '600',
+                cursor: 'pointer'
+              }}
+            >
+              View Library
+            </button>
+            <button
+              onClick={resetBuilder}
+              style={{
+                background: 'linear-gradient(135deg, #8B5CF6 0%, #6366F1 100%)',
+                border: 'none',
+                borderRadius: '10px',
+                padding: '14px 28px',
+                color: 'white',
+                fontWeight: '600',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px'
+              }}
+            >
+              <Plus size={18} /> Create Another
+            </button>
+          </div>
+        </div>
+      )}
+
       <style>{`
         @keyframes spin {
           from { transform: rotate(0deg); }
