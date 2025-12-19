@@ -1,5 +1,5 @@
 // Empire AI - Chat Interface
-// Version 3.7 - Fixed Knowledge Retrieval
+// Version 3.8 - FIXED queryIntelligence signature
 
 import React, { useState, useEffect, useRef } from 'react';
 import { 
@@ -168,6 +168,12 @@ export default function Chat(props) {
     totalIssues: safeIssues.length,
     deptKnowledge: safeKnowledge.filter(k => matchesDepartment(k, deptId, deptName)).length,
     deptDocs: safeDocs.filter(d => d && d.status === 'synced' && matchesDepartment(d, deptId, deptName)).length,
+    docDetails: safeDocs.filter(d => d && d.status === 'synced').map(d => ({
+      name: d.name,
+      dept: d.department,
+      chars: (d.content || '').length,
+      rows: ((d.content || '').match(/--- Row/g) || []).length
+    }))
   };
 
   // Scroll on new messages
@@ -202,7 +208,7 @@ export default function Chat(props) {
     }
   } catch(e) {}
 
-  // Build context - FIXED VERSION
+  // Build context - FIXED VERSION with correct queryIntelligence signature
   const buildContext = async (query) => {
     let context = '';
     let topScore = 0;
@@ -214,28 +220,15 @@ export default function Chat(props) {
     console.log('Available docs:', safeDocs.length);
     console.log('Available intelligence:', safeIndex.length);
     
-    // 1. Intelligence search (semantic + keyword)
+    // 1. Intelligence search (keyword-based via queryIntelligence)
+    // FIXED: Correct signature is queryIntelligence(index, query, dept, limit)
     if (safeIndex.length > 0 && typeof queryIntelligence === 'function') {
       try {
-        let emb = safeGetCached(query);
-        if (emb) {
-          cached = true;
-        } else {
-          try {
-            const resp = await fetch('/api/generate-embedding', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ text: query })
-            });
-            if (resp.ok) {
-              const data = await resp.json();
-              emb = data.embedding;
-              safeSetCached(query, emb);
-            }
-          } catch(e) { console.log('Embedding error:', e); }
-        }
+        // Note: queryIntelligence uses keyword matching, not embeddings
+        // The embedding cache is for future semantic search enhancement
+        const deptFilter = searchAllDepts ? null : deptId;
+        const results = queryIntelligence(safeIndex, query, deptFilter, 10);
         
-        const results = queryIntelligence(query, searchAllDepts ? null : deptId, emb);
         if (Array.isArray(results) && results.length > 0) {
           topScore = results[0]?.score || 0;
           context += '\n=== CENTRAL INTELLIGENCE ===\n';
@@ -245,30 +238,29 @@ export default function Chat(props) {
               sources.push({ type: 'intelligence', name: item.title, score: item.score });
             }
           });
-          console.log('Intelligence results:', results.length);
+          console.log('Intelligence results:', results.length, 'Top score:', topScore);
         }
       } catch(e) {
         console.log('Query intelligence error:', e);
+        setDebugError('Intelligence query failed: ' + e.message);
       }
     }
     
-    // 2. Connected docs - NOW FILTERED BY DEPARTMENT
+    // 2. Connected docs - filtered by department
     if (safeDocs.length > 0) {
       try {
         let docsToInclude;
         if (searchAllDepts) {
-          // Include all synced docs
           docsToInclude = safeDocs.filter(d => d && d.status === 'synced' && d.content);
         } else {
-          // Filter by department - match by ID or name
           docsToInclude = safeDocs.filter(d => 
             d && d.status === 'synced' && d.content && matchesDepartment(d, deptId, deptName)
           );
           
-          // Also include docs marked as "company-wide" or with no department
+          // Also include company-wide docs
           const companyWideDocs = safeDocs.filter(d => 
             d && d.status === 'synced' && d.content && 
-            (!d.department || d.department === 'company-wide' || d.department === 'all')
+            (!d.department || d.department === 'company-wide' || d.department === 'all' || d.department === 'company')
           );
           docsToInclude = [...new Set([...docsToInclude, ...companyWideDocs])];
         }
@@ -278,27 +270,30 @@ export default function Chat(props) {
         if (docsToInclude.length > 0) {
           context += '\n=== CONNECTED DOCUMENTS ===\n';
           docsToInclude.forEach(d => {
-            const content = (d.content || '').substring(0, 15000); // Increased limit
+            // Allow up to 100,000 chars per doc
+            const content = (d.content || '').substring(0, 100000);
             context += `\n[${d.name || 'Document'}] (${d.department || 'general'}):\n${content}\n`;
-            sources.push({ type: 'doc', name: d.name });
+            sources.push({ type: 'doc', name: d.name, chars: content.length });
           });
         }
-      } catch(e) { console.log('Connected docs error:', e); }
+      } catch(e) { 
+        console.log('Connected docs error:', e); 
+        setDebugError('Docs error: ' + e.message);
+      }
     }
     
-    // 3. Knowledge base - IMPROVED MATCHING
+    // 3. Knowledge base
     if (safeKnowledge.length > 0) {
       try {
         let filtered;
         if (searchAllDepts) {
           filtered = safeKnowledge;
         } else {
-          // Match by department ID or name
           filtered = safeKnowledge.filter(k => matchesDepartment(k, deptId, deptName));
           
           // Also include company-wide knowledge
           const companyWide = safeKnowledge.filter(k => 
-            k && (!k.department || k.department === 'company-wide' || k.department === 'all')
+            k && (!k.department || k.department === 'company-wide' || k.department === 'all' || k.department === 'company')
           );
           filtered = [...new Set([...filtered, ...companyWide])];
         }
@@ -314,7 +309,9 @@ export default function Chat(props) {
             }
           });
         }
-      } catch(e) { console.log('Knowledge error:', e); }
+      } catch(e) { 
+        console.log('Knowledge error:', e); 
+      }
     }
     
     // 4. Active issues
@@ -338,13 +335,20 @@ export default function Chat(props) {
           });
           sources.push({ type: 'issues', name: `${activeIssues.length} issues` });
         }
-      } catch(e) { console.log('Issues error:', e); }
+      } catch(e) { 
+        console.log('Issues error:', e); 
+      }
     }
     
     console.log('Total context length:', context.length);
     console.log('Sources found:', sources);
     
-    return { context, topScore, cached, sources };
+    // Track search for analytics
+    if (typeof trackSearch === 'function') {
+      try { trackSearch(false); } catch(e) {}
+    }
+    
+    return { context, topScore, cached: false, sources };
   };
 
   // Parse issue from response
@@ -446,10 +450,6 @@ export default function Chat(props) {
       
       setRagInfo({ active: context.length > 0, cached, topScore, sources });
       
-      if (typeof trackSearch === 'function') {
-        try { trackSearch(cached); } catch(e) {}
-      }
-      
       // Build prompt
       const summary = safeGetConversationSummary(messages);
       const deptInstr = activeDepartment?.instructions || '';
@@ -513,7 +513,7 @@ Be helpful, specific, and reference the company's actual data when available.`;
         try { trackChatMessage(deptId); } catch(e) {}
       }
       if (topScore < GAPS_CONFIG.LOW_RELEVANCE_THRESHOLD && text.length >= GAPS_CONFIG.MIN_QUERY_LENGTH && typeof recordKnowledgeGap === 'function') {
-        try { recordKnowledgeGap(text, deptId, topScore); } catch(e) {}
+        try { recordKnowledgeGap(text, topScore, deptId); } catch(e) {}
       }
       if (typeof addToIntelligence === 'function') {
         try { addToIntelligence({ sourceType: 'chat_query', sourceId: safeGenerateId('chat'), title: text.substring(0,50), content: `Q: ${text}\nA: ${clean.substring(0,500)}`, department: deptId, relevanceBoost: 1 }); } catch(e) {}
@@ -631,8 +631,8 @@ Be helpful, specific, and reference the company's actual data when available.`;
           </button>
           
           {ragInfo.active && (
-            <div style={{ padding: '4px 10px', background: ragInfo.cached ? 'rgba(139,92,246,0.2)' : 'rgba(59,130,246,0.2)', borderRadius: 12, fontSize: 11, color: ragInfo.cached ? '#A78BFA' : '#60A5FA', display: 'flex', alignItems: 'center', gap: 4 }}>
-              <Database size={12} /> RAG {ragInfo.cached ? '(Cached)' : ''}
+            <div style={{ padding: '4px 10px', background: 'rgba(59,130,246,0.2)', borderRadius: 12, fontSize: 11, color: '#60A5FA', display: 'flex', alignItems: 'center', gap: 4 }}>
+              <Database size={12} /> RAG Active
             </div>
           )}
           
@@ -690,9 +690,22 @@ Be helpful, specific, and reference the company's actual data when available.`;
               <div style={{ color: '#E2E8F0', fontWeight: 600 }}>{knowledgeDebug.totalIssues}</div>
             </div>
           </div>
+          {knowledgeDebug.docDetails && knowledgeDebug.docDetails.length > 0 && (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ color: '#94A3B8', marginBottom: 6 }}>Connected Docs Content:</div>
+              {knowledgeDebug.docDetails.map((doc, i) => (
+                <div key={i} style={{ padding: '6px 10px', background: 'rgba(255,255,255,0.03)', borderRadius: 4, marginBottom: 4, display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: '#E2E8F0' }}>{doc.name}</span>
+                  <span style={{ color: doc.chars > 50000 ? '#10B981' : doc.chars > 10000 ? '#F59E0B' : '#EF4444' }}>
+                    {doc.chars.toLocaleString()} chars | ~{doc.rows} rows | {doc.dept}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
           {ragInfo.sources && ragInfo.sources.length > 0 && (
             <div style={{ marginTop: 8, color: '#64748B' }}>
-              Last query sources: {ragInfo.sources.map(s => s.name).join(', ')}
+              Last query sources: {ragInfo.sources.map(s => `${s.name}${s.chars ? ` (${s.chars.toLocaleString()} chars)` : ''}`).join(', ')}
             </div>
           )}
         </div>
