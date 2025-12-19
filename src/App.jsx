@@ -1,788 +1,853 @@
-// Empire AI - Main Application Shell
-// Version 3.3 - Fixed Dashboard Props
+// Empire AI - Chat Interface
+// Version 3.7 - Fixed Knowledge Retrieval
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
-  LayoutDashboard, Settings, BookOpen, ClipboardList, HelpCircle, Mic, 
-  ChevronLeft, ChevronRight, Menu, X, Building, TrendingUp, DollarSign, 
-  Wrench, Calculator, Users, ShieldCheck, ClipboardCheck, Briefcase, 
-  Target, Lightbulb, Package, Home, PiggyBank, UserCheck, Shield, 
-  Clipboard, BarChart, FileText, Folder, Star, Heart, Zap, Globe, 
-  Smartphone, Palette, BookOpenCheck, MessageSquare
+  Send, Loader2, Sparkles, Building, Globe, Trash2, 
+  MessageSquare, Clock, FileText, Database, Plus,
+  ChevronDown, ChevronUp, User, Calendar, AlertCircle
 } from 'lucide-react';
 
-import Dashboard from './pages/Dashboard';
-import Chat from './pages/Chat';
-import Knowledge from './pages/Knowledge';
-import Issues from './pages/Issues';
-import Systems from './pages/Systems';
-import Help from './pages/Help';
-import SOPs from './pages/SOPs';
-import VoiceModal from './components/VoiceModal';
+// Safe utility imports with fallbacks
+let formatTimestamp, formatDate, getCachedEmbedding, setCachedEmbedding,
+    trimConversationHistory, getConversationSummary, generateId,
+    CONVERSATION_MEMORY_CONFIG, KNOWLEDGE_GAPS_CONFIG, CHAT_LOGS_CONFIG;
 
-import { 
-  STORAGE_KEYS, 
-  loadFromStorage, 
-  saveToStorage,
-  extractTags,
-  createIntelligenceItem,
-  queryIntelligence,
-  normalizeTags,
-  checkForDuplicate,
-  recordKnowledgeGap,
-  getKnowledgeGaps,
-  resolveKnowledgeGap,
-  deleteKnowledgeGap,
-  clearResolvedGaps,
-  trackChatMessage,
-  trackVoiceSession,
-  trackIssueCreated,
-  trackIssueResolved,
-  trackDocConnected,
-  trackKnowledgeAdded,
-  trackSearch,
-  getAnalyticsSummary,
-  resetAnalytics,
-  trimConversationHistory,
-  getConversationSummary,
-  CONVERSATION_MEMORY_CONFIG,
-  DEFAULT_DEPARTMENTS,
-  DEFAULT_TEAM_MEMBER,
-  DEFAULT_COLUMNS,
-  INTELLIGENCE_CONFIG,
-} from './utils';
+try {
+  const utils = require('../utils');
+  formatTimestamp = utils.formatTimestamp;
+  formatDate = utils.formatDate;
+  getCachedEmbedding = utils.getCachedEmbedding;
+  setCachedEmbedding = utils.setCachedEmbedding;
+  trimConversationHistory = utils.trimConversationHistory;
+  getConversationSummary = utils.getConversationSummary;
+  generateId = utils.generateId;
+  CONVERSATION_MEMORY_CONFIG = utils.CONVERSATION_MEMORY_CONFIG;
+  KNOWLEDGE_GAPS_CONFIG = utils.KNOWLEDGE_GAPS_CONFIG;
+  CHAT_LOGS_CONFIG = utils.CHAT_LOGS_CONFIG;
+} catch (e) {
+  console.log('Utils import issue, using fallbacks');
+}
 
-// Icon mapping for dynamic icon rendering
-const ICON_MAP = {
-  Building, TrendingUp, DollarSign, Wrench, Calculator, Users,
-  ShieldCheck, ClipboardCheck, Briefcase, Target, Lightbulb, Package,
-  Home, PiggyBank, UserCheck, Shield, Clipboard, BarChart, FileText,
-  Folder, Star, Heart, Zap, Globe, Smartphone, Palette, BookOpenCheck,
-  Settings, LayoutDashboard, HelpCircle, MessageSquare
+// Fallback implementations
+const safeFormatTimestamp = (ts) => {
+  try {
+    if (typeof formatTimestamp === 'function') return formatTimestamp(ts);
+    if (!ts) return '';
+    return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  } catch(e) { return ''; }
 };
 
-const renderDeptIcon = (iconName, size = 16) => {
-  if (!iconName) return null;
-  
-  if (typeof iconName === 'string' && /^[A-Z]/.test(iconName) && iconName.length > 1) {
-    const IconComponent = ICON_MAP[iconName];
-    if (IconComponent) {
-      return <IconComponent size={size} />;
-    }
-  }
-  
-  return <span style={{ fontSize: size }}>{iconName}</span>;
+const safeFormatDate = (ts) => {
+  try {
+    if (typeof formatDate === 'function') return formatDate(ts);
+    if (!ts) return '';
+    return new Date(ts).toLocaleDateString();
+  } catch(e) { return ''; }
 };
 
-export default function App() {
-  // Navigation state
-  const [currentPage, setCurrentPage] = useState('dashboard');
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [showVoiceModal, setShowVoiceModal] = useState(false);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  
-  // Department state
-  const [departments, setDepartments] = useState(() => 
-    loadFromStorage(STORAGE_KEYS.DEPARTMENTS, DEFAULT_DEPARTMENTS)
-  );
-  const [activeDepartment, setActiveDepartment] = useState(null);
-  
-  // Core data state
-  const [conversations, setConversations] = useState(() => 
-    loadFromStorage(STORAGE_KEYS.CONVERSATIONS, {})
-  );
-  const [knowledge, setKnowledge] = useState(() => 
-    loadFromStorage(STORAGE_KEYS.KNOWLEDGE, [])
-  );
-  const [activities, setActivities] = useState(() => 
-    loadFromStorage(STORAGE_KEYS.ACTIVITIES, [])
-  );
-  const [issues, setIssues] = useState(() => 
-    loadFromStorage(STORAGE_KEYS.ISSUES, [])
-  );
-  const [issueColumns, setIssueColumns] = useState(() => 
-    loadFromStorage(STORAGE_KEYS.ISSUE_COLUMNS, DEFAULT_COLUMNS)
-  );
-  
-  // Chat logs state
-  const [chatLogs, setChatLogs] = useState(() => 
-    loadFromStorage(STORAGE_KEYS.CHAT_LOGS, [])
-  );
-  
-  // SOPs state
-  const [sops, setSops] = useState(() => 
-    loadFromStorage(STORAGE_KEYS.SOPS, [])
-  );
-  
-  // Intelligence state
-  const [intelligenceIndex, setIntelligenceIndex] = useState(() => 
-    loadFromStorage(STORAGE_KEYS.INTELLIGENCE, [])
-  );
-  const [intelligenceCap, setIntelligenceCap] = useState(() => 
-    loadFromStorage(STORAGE_KEYS.INTELLIGENCE_CAP, INTELLIGENCE_CONFIG.DEFAULT_CAP)
-  );
-  
-  // Team state
-  const [teamMembers, setTeamMembers] = useState(() => 
-    loadFromStorage(STORAGE_KEYS.TEAM_MEMBERS, [DEFAULT_TEAM_MEMBER])
-  );
-  const [pendingInvites, setPendingInvites] = useState(() => 
-    loadFromStorage(STORAGE_KEYS.PENDING_INVITES, [])
-  );
-  
-  // Instructions state
-  const [systemInstructions, setSystemInstructions] = useState(() => 
-    loadFromStorage(STORAGE_KEYS.SYSTEM_INSTRUCTIONS, '')
-  );
-  
-  // Connected docs state
-  const [connectedDocs, setConnectedDocs] = useState(() => 
-    loadFromStorage(STORAGE_KEYS.CONNECTED_DOCS, [])
-  );
-  
-  // Knowledge gaps state
-  const [knowledgeGaps, setKnowledgeGaps] = useState(() => 
-    getKnowledgeGaps()
-  );
+const safeGenerateId = (prefix = 'id') => {
+  try {
+    if (typeof generateId === 'function') return generateId(prefix);
+  } catch(e) {}
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+};
 
-  // Pending message from dashboard quick chat
-  const [pendingMessage, setPendingMessage] = useState(null);
+const safeGetConversationSummary = (messages) => {
+  try {
+    if (typeof getConversationSummary === 'function') return getConversationSummary(messages);
+    if (!messages || !Array.isArray(messages) || messages.length === 0) return '';
+    const userMsgs = messages.filter(m => m && m.role === 'user').slice(-3);
+    return userMsgs.map(m => (m.content || '').substring(0, 50)).join('; ');
+  } catch(e) { return ''; }
+};
 
-  // Persist to localStorage
-  useEffect(() => { saveToStorage(STORAGE_KEYS.DEPARTMENTS, departments); }, [departments]);
-  useEffect(() => { saveToStorage(STORAGE_KEYS.CONVERSATIONS, conversations); }, [conversations]);
-  useEffect(() => { saveToStorage(STORAGE_KEYS.KNOWLEDGE, knowledge); }, [knowledge]);
-  useEffect(() => { saveToStorage(STORAGE_KEYS.ACTIVITIES, activities); }, [activities]);
-  useEffect(() => { saveToStorage(STORAGE_KEYS.ISSUES, issues); }, [issues]);
-  useEffect(() => { saveToStorage(STORAGE_KEYS.ISSUE_COLUMNS, issueColumns); }, [issueColumns]);
-  useEffect(() => { saveToStorage(STORAGE_KEYS.CHAT_LOGS, chatLogs); }, [chatLogs]);
-  useEffect(() => { saveToStorage(STORAGE_KEYS.SOPS, sops); }, [sops]);
-  useEffect(() => { saveToStorage(STORAGE_KEYS.INTELLIGENCE, intelligenceIndex); }, [intelligenceIndex]);
-  useEffect(() => { saveToStorage(STORAGE_KEYS.INTELLIGENCE_CAP, intelligenceCap); }, [intelligenceCap]);
-  useEffect(() => { saveToStorage(STORAGE_KEYS.TEAM_MEMBERS, teamMembers); }, [teamMembers]);
-  useEffect(() => { saveToStorage(STORAGE_KEYS.PENDING_INVITES, pendingInvites); }, [pendingInvites]);
-  useEffect(() => { saveToStorage(STORAGE_KEYS.SYSTEM_INSTRUCTIONS, systemInstructions); }, [systemInstructions]);
-  useEffect(() => { saveToStorage(STORAGE_KEYS.CONNECTED_DOCS, connectedDocs); }, [connectedDocs]);
-
-  // Refresh knowledge gaps when they change elsewhere
-  const refreshKnowledgeGaps = useCallback(() => {
-    setKnowledgeGaps(getKnowledgeGaps());
-  }, []);
-
-  // AI Tag Generation
-  const generateSmartTags = async (content, title, sourceType) => {
-    try {
-      const response = await fetch('/api/generate-tags', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: content?.substring(0, 1000), title, sourceType }),
-      });
-      if (response.ok) {
-        const data = await response.json();
-        return normalizeTags(data.tags || []);
-      }
-    } catch (e) {
-      console.log('Smart tags unavailable, using extraction');
-    }
-    return normalizeTags(extractTags(content));
-  };
-
-  // Activity logging with intelligence
-  const logActivity = useCallback(async (text, type = 'general', department = null, user = 'You') => {
-    const deptName = department || activeDepartment?.name || 'General';
-    
-    const activity = {
-      id: `act_${Date.now()}`,
-      text,
-      type,
-      department: deptName,
-      user,
-      timestamp: new Date().toISOString(),
-    };
-    
-    setActivities(prev => [activity, ...prev].slice(0, 100));
-    
-    // Add to intelligence
-    const tags = await generateSmartTags(text, `Activity: ${type}`, 'activity_log');
-    const intellItem = createIntelligenceItem(
-      'activity_log',
-      activity.id,
-      `Activity: ${text.substring(0, 50)}`,
-      text,
-      deptName,
-      [...tags, type, 'activity'],
-      { user, activityType: type },
-      1
-    );
-    
-    addToIntelligence(intellItem);
-  }, [activeDepartment]);
-
-  // Add to intelligence with duplicate detection
-  const addToIntelligence = useCallback(async (item) => {
-    setIntelligenceIndex(prev => {
-      const duplicateCheck = checkForDuplicate(item, prev);
-      
-      if (duplicateCheck.isDuplicate) {
-        console.log(`Duplicate detected (${Math.round(duplicateCheck.similarity * 100)}% similar), updating existing item`);
-        return prev.map(existing => 
-          existing.id === duplicateCheck.existingItem.id
-            ? { ...existing, createdAt: new Date().toISOString(), relevanceBoost: Math.max(existing.relevanceBoost, item.relevanceBoost) }
-            : existing
-        );
-      }
-      
-      const newIndex = [item, ...prev];
-      return newIndex.slice(0, intelligenceCap);
+const safeTrimHistory = (convos, max) => {
+  try {
+    if (typeof trimConversationHistory === 'function') return trimConversationHistory(convos, max);
+    const result = {};
+    Object.keys(convos || {}).forEach(key => {
+      result[key] = (convos[key] || []).slice(-(max || 20));
     });
-  }, [intelligenceCap]);
+    return result;
+  } catch(e) { return convos || {}; }
+};
 
-  // Handle department click
-  const handleDepartmentClick = (dept) => {
-    setActiveDepartment(dept);
-    setCurrentPage('chat');
-    setMobileMenuOpen(false);
+const safeGetCached = (query) => {
+  try {
+    if (typeof getCachedEmbedding === 'function') return getCachedEmbedding(query);
+  } catch(e) {}
+  return null;
+};
+
+const safeSetCached = (query, emb) => {
+  try {
+    if (typeof setCachedEmbedding === 'function') setCachedEmbedding(query, emb);
+  } catch(e) {}
+};
+
+// Config defaults
+const CONV_CONFIG = CONVERSATION_MEMORY_CONFIG || { MAX_MESSAGES_PER_DEPT: 20 };
+const GAPS_CONFIG = KNOWLEDGE_GAPS_CONFIG || { LOW_RELEVANCE_THRESHOLD: 20, MIN_QUERY_LENGTH: 10 };
+const LOGS_CONFIG = CHAT_LOGS_CONFIG || { MAX_LOGS_PER_DEPT: 10, MAX_LOGS: 50 };
+
+// Helper to check if item belongs to department (matches by ID or name)
+const matchesDepartment = (item, deptId, deptName) => {
+  if (!item) return false;
+  const itemDept = (item.department || '').toLowerCase();
+  const checkId = (deptId || '').toLowerCase();
+  const checkName = (deptName || '').toLowerCase();
+  
+  // Match by exact ID
+  if (itemDept === checkId) return true;
+  // Match by name
+  if (itemDept === checkName) return true;
+  // Match if item dept contains the name (e.g., "production" matches "Production & Project Management")
+  if (checkName && itemDept.includes(checkName.split(' ')[0].toLowerCase())) return true;
+  if (checkName && checkName.includes(itemDept)) return true;
+  
+  return false;
+};
+
+export default function Chat(props) {
+  // Destructure with defaults
+  const {
+    activeDepartment = null,
+    conversations = {},
+    setConversations = null,
+    systemInstructions = '',
+    intelligenceIndex = [],
+    queryIntelligence = null,
+    knowledge = [],
+    connectedDocs = [],
+    issues = [],
+    setIssues = null,
+    departments = [],
+    logActivity = null,
+    addToIntelligence = null,
+    trackSearch = null,
+    trackChatMessage = null,
+    recordKnowledgeGap = null,
+    chatLogs = [],
+    setChatLogs = null,
+  } = props || {};
+
+  const [input, setInput] = useState('');
+  const [isThinking, setIsThinking] = useState(false);
+  const [searchAllDepts, setSearchAllDepts] = useState(false);
+  const [ragInfo, setRagInfo] = useState({ active: false, cached: false, topScore: 0, sources: [] });
+  const [notification, setNotification] = useState('');
+  const [showChatLogs, setShowChatLogs] = useState(false);
+  const [expandedLog, setExpandedLog] = useState(null);
+  const [debugError, setDebugError] = useState('');
+  const [showDebug, setShowDebug] = useState(false);
+  
+  const messagesEndRef = useRef(null);
+  const inputRef = useRef(null);
+  const pendingProcessed = useRef(false);
+  
+  const deptId = activeDepartment?.id || 'general';
+  const deptName = activeDepartment?.name || 'General';
+  
+  // Safe array access
+  const safeConvos = conversations || {};
+  const messages = Array.isArray(safeConvos[deptId]) ? safeConvos[deptId] : [];
+  const safeChatLogs = Array.isArray(chatLogs) ? chatLogs : [];
+  const deptChatLogs = safeChatLogs.filter(l => l && l.departmentId === deptId);
+  const safeKnowledge = Array.isArray(knowledge) ? knowledge : [];
+  const safeDocs = Array.isArray(connectedDocs) ? connectedDocs : [];
+  const safeIssues = Array.isArray(issues) ? issues : [];
+  const safeIndex = Array.isArray(intelligenceIndex) ? intelligenceIndex : [];
+  const safeDepts = Array.isArray(departments) ? departments : [];
+
+  // Debug info for knowledge sources
+  const knowledgeDebug = {
+    totalKnowledge: safeKnowledge.length,
+    totalDocs: safeDocs.length,
+    totalIntelligence: safeIndex.length,
+    totalIssues: safeIssues.length,
+    deptKnowledge: safeKnowledge.filter(k => matchesDepartment(k, deptId, deptName)).length,
+    deptDocs: safeDocs.filter(d => d && d.status === 'synced' && matchesDepartment(d, deptId, deptName)).length,
+    // Show character counts for each synced doc
+    docDetails: safeDocs.filter(d => d && d.status === 'synced').map(d => ({
+      name: d.name,
+      dept: d.department,
+      chars: (d.content || '').length,
+      rows: ((d.content || '').match(/--- Row/g) || []).length
+    }))
   };
 
-  // Navigate to chat with message from dashboard
-  const handleQuickChat = (message) => {
-    setPendingMessage(message);
-    if (!activeDepartment) {
-      setActiveDepartment(departments[0]);
-    }
-    setCurrentPage('chat');
-  };
-
-  // Clear conversation history for a department
-  const clearConversationHistory = useCallback((deptId) => {
-    setConversations(prev => {
-      const updated = { ...prev };
-      delete updated[deptId];
-      return updated;
-    });
-    logActivity('Cleared conversation history', 'system', activeDepartment?.name);
-  }, [activeDepartment, logActivity]);
-
-  // Fetch connected doc
-  const fetchConnectedDoc = async (doc) => {
-    try {
-      const response = await fetch('/api/fetch-doc', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: doc.url }),
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        return { ...doc, content: data.content, status: 'synced', lastFetched: new Date().toISOString(), error: null };
-      } else {
-        const error = await response.json();
-        return { ...doc, status: 'error', error: error.error || 'Failed to fetch' };
-      }
-    } catch (e) {
-      return { ...doc, status: 'error', error: 'Network error' };
-    }
-  };
-
-  // Refresh all connected docs
-  const refreshAllDocs = async () => {
-    const updated = await Promise.all(connectedDocs.map(fetchConnectedDoc));
-    setConnectedDocs(updated);
-  };
-
-  // Auto-refresh docs on load and every 5 minutes
+  // Scroll on new messages
   useEffect(() => {
-    if (connectedDocs.length > 0) {
-      refreshAllDocs();
-      const interval = setInterval(refreshAllDocs, 5 * 60 * 1000);
-      return () => clearInterval(interval);
+    try { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); } catch(e) {}
+  }, [messages.length, isThinking]);
+
+  // Handle pending message from dashboard
+  useEffect(() => {
+    if (pendingProcessed.current) return;
+    try {
+      const pending = sessionStorage.getItem('pendingChatMessage');
+      if (pending) {
+        pendingProcessed.current = true;
+        sessionStorage.removeItem('pendingChatMessage');
+        setInput(pending);
+        setTimeout(() => handleSend(pending), 400);
+      }
+    } catch(e) {}
+  }, [deptId]);
+  
+  useEffect(() => { pendingProcessed.current = false; }, [deptId]);
+
+  // Session continuation check
+  let isReturning = false;
+  try {
+    if (messages.length > 0) {
+      const last = messages[messages.length - 1];
+      if (last && last.timestamp) {
+        isReturning = (Date.now() - new Date(last.timestamp).getTime()) > 3600000;
+      }
     }
-  }, []);
+  } catch(e) {}
 
-  // Nav items
-  const navItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'systems', label: 'Systems', icon: Settings },
-    { id: 'knowledge', label: 'Knowledge', icon: BookOpen },
-    { id: 'issues', label: 'Issues', icon: ClipboardList, badge: issues.filter(i => !i.archived && i.status !== 'Resolved').length },
-    { id: 'sops', label: 'SOPs', icon: FileText },
-    { id: 'help', label: 'Help', icon: HelpCircle },
-  ];
+  // Build context - FIXED VERSION
+  const buildContext = async (query) => {
+    let context = '';
+    let topScore = 0;
+    let cached = false;
+    let sources = [];
+    
+    console.log('Building context for:', deptId, deptName);
+    console.log('Available knowledge:', safeKnowledge.length);
+    console.log('Available docs:', safeDocs.length);
+    console.log('Available intelligence:', safeIndex.length);
+    
+    // 1. Intelligence search (semantic + keyword)
+    if (safeIndex.length > 0 && typeof queryIntelligence === 'function') {
+      try {
+        let emb = safeGetCached(query);
+        if (emb) {
+          cached = true;
+        } else {
+          try {
+            const resp = await fetch('/api/generate-embedding', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ text: query })
+            });
+            if (resp.ok) {
+              const data = await resp.json();
+              emb = data.embedding;
+              safeSetCached(query, emb);
+            }
+          } catch(e) { console.log('Embedding error:', e); }
+        }
+        
+        const results = queryIntelligence(query, searchAllDepts ? null : deptId, emb);
+        if (Array.isArray(results) && results.length > 0) {
+          topScore = results[0]?.score || 0;
+          context += '\n=== CENTRAL INTELLIGENCE ===\n';
+          results.slice(0, 8).forEach((item, i) => {
+            if (item) {
+              context += `${i+1}. [${item.sourceType || 'item'}] ${item.title || 'Item'}: ${(item.content || '').substring(0, 300)}...\n`;
+              sources.push({ type: 'intelligence', name: item.title, score: item.score });
+            }
+          });
+          console.log('Intelligence results:', results.length);
+        }
+      } catch(e) {
+        console.log('Query intelligence error:', e);
+      }
+    }
+    
+    // 2. Connected docs - NOW FILTERED BY DEPARTMENT
+    if (safeDocs.length > 0) {
+      try {
+        let docsToInclude;
+        if (searchAllDepts) {
+          // Include all synced docs
+          docsToInclude = safeDocs.filter(d => d && d.status === 'synced' && d.content);
+        } else {
+          // Filter by department - match by ID or name
+          docsToInclude = safeDocs.filter(d => 
+            d && d.status === 'synced' && d.content && matchesDepartment(d, deptId, deptName)
+          );
+          
+          // Also include docs marked as "company-wide" or with no department
+          const companyWideDocs = safeDocs.filter(d => 
+            d && d.status === 'synced' && d.content && 
+            (!d.department || d.department === 'company-wide' || d.department === 'all')
+          );
+          docsToInclude = [...new Set([...docsToInclude, ...companyWideDocs])];
+        }
+        
+        console.log('Docs to include:', docsToInclude.length, docsToInclude.map(d => d.name));
+        
+        if (docsToInclude.length > 0) {
+          context += '\n=== CONNECTED DOCUMENTS ===\n';
+          docsToInclude.forEach(d => {
+            // Allow up to 100,000 chars per doc - enough for large spreadsheets
+            const content = (d.content || '').substring(0, 100000);
+            context += `\n[${d.name || 'Document'}] (${d.department || 'general'}):\n${content}\n`;
+            sources.push({ type: 'doc', name: d.name, chars: content.length });
+          });
+        }
+      } catch(e) { console.log('Connected docs error:', e); }
+    }
+    
+    // 3. Knowledge base - IMPROVED MATCHING
+    if (safeKnowledge.length > 0) {
+      try {
+        let filtered;
+        if (searchAllDepts) {
+          filtered = safeKnowledge;
+        } else {
+          // Match by department ID or name
+          filtered = safeKnowledge.filter(k => matchesDepartment(k, deptId, deptName));
+          
+          // Also include company-wide knowledge
+          const companyWide = safeKnowledge.filter(k => 
+            k && (!k.department || k.department === 'company-wide' || k.department === 'all')
+          );
+          filtered = [...new Set([...filtered, ...companyWide])];
+        }
+        
+        console.log('Knowledge to include:', filtered.length);
+        
+        if (filtered.length > 0) {
+          context += '\n=== KNOWLEDGE BASE ===\n';
+          filtered.slice(0, 10).forEach(k => {
+            if (k) {
+              context += `- [${k.type || 'item'}] ${k.title || 'Item'}: ${(k.content || '').substring(0, 500)}\n`;
+              sources.push({ type: 'knowledge', name: k.title });
+            }
+          });
+        }
+      } catch(e) { console.log('Knowledge error:', e); }
+    }
+    
+    // 4. Active issues
+    if (safeIssues.length > 0) {
+      try {
+        let activeIssues;
+        if (searchAllDepts) {
+          activeIssues = safeIssues.filter(i => i && !i.archived);
+        } else {
+          activeIssues = safeIssues.filter(i => 
+            i && !i.archived && matchesDepartment(i, deptId, deptName)
+          );
+        }
+        
+        if (activeIssues.length > 0) {
+          context += '\n=== ACTIVE ISSUES ===\n';
+          activeIssues.slice(0, 10).forEach((iss, i) => {
+            context += `${i+1}. [${iss.status || 'Open'}] [${iss.priority || 'Medium'}] ${iss.title || 'Issue'}`;
+            if (iss.description) context += ` - ${iss.description.substring(0, 100)}`;
+            context += '\n';
+          });
+          sources.push({ type: 'issues', name: `${activeIssues.length} issues` });
+        }
+      } catch(e) { console.log('Issues error:', e); }
+    }
+    
+    console.log('Total context length:', context.length);
+    console.log('Sources found:', sources);
+    
+    return { context, topScore, cached, sources };
+  };
 
-  // Render current page
-  const renderPage = () => {
-    const commonProps = {
-      logActivity,
-      activeDepartment,
-      departments,
-      setDepartments,
-    };
+  // Parse issue from response
+  const parseIssue = (resp) => {
+    try {
+      if (!resp) return null;
+      const m = resp.match(/\[ISSUE_CREATED\](.*?)\[\/ISSUE_CREATED\]/s);
+      if (m) {
+        const parts = m[1].split('|').map(p => p.trim());
+        if (parts.length >= 1) {
+          return { title: parts[0], priority: parts[1] || 'Medium', department: parts[2] || deptId, description: parts[3] || '' };
+        }
+      }
+    } catch(e) {}
+    return null;
+  };
 
-    switch (currentPage) {
-      case 'dashboard':
-        return (
-          <Dashboard 
-            {...commonProps}
-            activities={activities}
-            issues={issues}
-            knowledge={knowledge}
-            intelligenceIndex={intelligenceIndex}
-            teamMembers={teamMembers}
-            onNavigate={setCurrentPage}
-            setActiveDepartment={setActiveDepartment}
-            setShowVoiceModal={setShowVoiceModal}
-          />
-        );
-      case 'systems':
-        return (
-          <Systems 
-            {...commonProps}
-            intelligenceIndex={intelligenceIndex}
-            intelligenceCap={intelligenceCap}
-            setIntelligenceCap={setIntelligenceCap}
-            teamMembers={teamMembers}
-            setTeamMembers={setTeamMembers}
-            pendingInvites={pendingInvites}
-            setPendingInvites={setPendingInvites}
-            systemInstructions={systemInstructions}
-            setSystemInstructions={setSystemInstructions}
-            connectedDocs={connectedDocs}
-            knowledgeGaps={knowledgeGaps}
-            refreshKnowledgeGaps={refreshKnowledgeGaps}
-            resolveKnowledgeGap={resolveKnowledgeGap}
-            deleteKnowledgeGap={deleteKnowledgeGap}
-            clearResolvedGaps={clearResolvedGaps}
-            getAnalyticsSummary={getAnalyticsSummary}
-            resetAnalytics={resetAnalytics}
-          />
-        );
-      case 'knowledge':
-        return (
-          <Knowledge 
-            {...commonProps}
-            knowledge={knowledge}
-            setKnowledge={setKnowledge}
-            addToIntelligence={addToIntelligence}
-            generateSmartTags={generateSmartTags}
-            connectedDocs={connectedDocs}
-            setConnectedDocs={setConnectedDocs}
-            fetchConnectedDoc={fetchConnectedDoc}
-            refreshAllDocs={refreshAllDocs}
-            trackDocConnected={trackDocConnected}
-            trackKnowledgeAdded={trackKnowledgeAdded}
-          />
-        );
-      case 'issues':
-        return (
-          <Issues 
-            {...commonProps}
-            issues={issues}
-            setIssues={setIssues}
-            issueColumns={issueColumns}
-            setIssueColumns={setIssueColumns}
-            addToIntelligence={addToIntelligence}
-            generateSmartTags={generateSmartTags}
-            trackIssueCreated={trackIssueCreated}
-            trackIssueResolved={trackIssueResolved}
-          />
-        );
-      case 'sops':
-        return (
-          <SOPs 
-            {...commonProps}
-            sops={sops}
-            setSops={setSops}
-            knowledge={knowledge}
-            setKnowledge={setKnowledge}
-            addToIntelligence={addToIntelligence}
-          />
-        );
-      case 'help':
-        return <Help />;
-      case 'chat':
-        return (
-          <Chat 
-            {...commonProps}
-            conversations={conversations}
-            setConversations={setConversations}
-            knowledge={knowledge}
-            connectedDocs={connectedDocs}
-            intelligenceIndex={intelligenceIndex}
-            systemInstructions={systemInstructions}
-            addToIntelligence={addToIntelligence}
-            generateSmartTags={generateSmartTags}
-            queryIntelligence={queryIntelligence}
-            issues={issues}
-            setIssues={setIssues}
-            pendingMessage={pendingMessage}
-            setPendingMessage={setPendingMessage}
-            clearConversationHistory={clearConversationHistory}
-            recordKnowledgeGap={recordKnowledgeGap}
-            trackChatMessage={trackChatMessage}
-            trackSearch={trackSearch}
-            trackIssueCreated={trackIssueCreated}
-            chatLogs={chatLogs}
-            setChatLogs={setChatLogs}
-          />
-        );
-      default:
-        return null;
+  // Create issue
+  const createNewIssue = (data) => {
+    try {
+      if (!data || typeof setIssues !== 'function') return;
+      
+      let dept = deptId;
+      if (data.department && safeDepts.length > 0) {
+        const found = safeDepts.find(d => d && d.name && d.name.toLowerCase().includes(data.department.toLowerCase()));
+        if (found) dept = found.id;
+      }
+      
+      const issue = {
+        id: safeGenerateId('issue'),
+        title: data.title || 'New Issue',
+        description: data.description || '',
+        department: dept,
+        priority: ['High','Medium','Low'].includes(data.priority) ? data.priority : 'Medium',
+        status: 'Open',
+        assignee: '',
+        createdAt: new Date().toISOString(),
+        archived: false,
+      };
+      
+      setIssues(prev => [...(Array.isArray(prev) ? prev : []), issue]);
+      
+      if (typeof logActivity === 'function') {
+        try { logActivity(`Created issue: ${issue.title}`, 'issue', deptName); } catch(e) {}
+      }
+      if (typeof addToIntelligence === 'function') {
+        try { addToIntelligence({ sourceType: 'issue_created', sourceId: issue.id, title: issue.title, content: issue.description, department: dept, relevanceBoost: 2 }); } catch(e) {}
+      }
+      
+      setNotification(`Issue created: ${issue.title}`);
+      setTimeout(() => setNotification(''), 3000);
+    } catch(e) {
+      console.log('Create issue error:', e);
+    }
+  };
+
+  // Clean response
+  const cleanResponse = (resp) => {
+    try {
+      if (!resp) return '';
+      return resp.replace(/\[ISSUE_CREATED\].*?\[\/ISSUE_CREATED\]/gs, '').trim();
+    } catch(e) { return resp || ''; }
+  };
+
+  // Main send function
+  const handleSend = async (msgText) => {
+    const text = (msgText || input || '').trim();
+    if (!text || isThinking) return;
+    
+    setDebugError('');
+    setInput('');
+    setIsThinking(true);
+    
+    // Add user message
+    const userMsg = { role: 'user', content: text, timestamp: new Date().toISOString() };
+    
+    if (typeof setConversations === 'function') {
+      try {
+        setConversations(prev => {
+          const p = prev || {};
+          return { ...p, [deptId]: [...(Array.isArray(p[deptId]) ? p[deptId] : []), userMsg] };
+        });
+      } catch(e) { console.log('Add user msg error:', e); }
+    }
+    
+    try {
+      // Build context
+      let context = '', topScore = 0, cached = false, sources = [];
+      try {
+        const ctx = await buildContext(text);
+        context = ctx.context || '';
+        topScore = ctx.topScore || 0;
+        cached = ctx.cached || false;
+        sources = ctx.sources || [];
+      } catch(e) { 
+        console.log('Build context error:', e); 
+        setDebugError('Context build failed: ' + e.message);
+      }
+      
+      setRagInfo({ active: context.length > 0, cached, topScore, sources });
+      
+      if (typeof trackSearch === 'function') {
+        try { trackSearch(cached); } catch(e) {}
+      }
+      
+      // Build prompt
+      const summary = safeGetConversationSummary(messages);
+      const deptInstr = activeDepartment?.instructions || '';
+      
+      const sysPrompt = `You are Empire AI, the operational intelligence assistant for Empire Remodeling.
+
+Current Department: ${deptName}
+${activeDepartment?.description ? `Department Focus: ${activeDepartment.description}` : ''}
+${summary ? `\nRecent conversation context: ${summary}` : ''}
+
+${context ? `\n--- AVAILABLE KNOWLEDGE ---\n${context}\n--- END KNOWLEDGE ---` : '\n[No specific knowledge available for this query]'}
+
+${systemInstructions ? `\n=== SYSTEM INSTRUCTIONS ===\n${systemInstructions}` : ''}
+${deptInstr ? `\n=== ${deptName.toUpperCase()} SPECIFIC INSTRUCTIONS ===\n${deptInstr}` : ''}
+
+IMPORTANT: When answering questions, USE the knowledge provided above. Reference specific documents, issues, or data when relevant. If you have relevant knowledge above, cite it in your response.
+
+If user asks to create an issue, include: [ISSUE_CREATED] Title | Priority | Dept | Description [/ISSUE_CREATED]
+
+Be helpful, specific, and reference the company's actual data when available.`;
+
+      // Get history
+      let history = [];
+      try {
+        history = messages.slice(-8).map(m => ({ role: m?.role || 'user', content: m?.content || '' }));
+      } catch(e) {}
+      
+      // API call
+      const resp = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text, systemPrompt: sysPrompt, conversationHistory: history })
+      });
+      
+      if (!resp.ok) throw new Error(`API ${resp.status}`);
+      
+      const data = await resp.json();
+      if (!data || typeof data.response !== 'string') throw new Error('Bad response');
+      
+      // Check for issue
+      const issueData = parseIssue(data.response);
+      if (issueData) createNewIssue(issueData);
+      
+      // Add AI response
+      const clean = cleanResponse(data.response);
+      const aiMsg = { role: 'assistant', content: clean, timestamp: new Date().toISOString() };
+      
+      if (typeof setConversations === 'function') {
+        try {
+          setConversations(prev => {
+            const p = prev || {};
+            const curr = [...(Array.isArray(p[deptId]) ? p[deptId] : []), aiMsg];
+            const trimmed = safeTrimHistory({ [deptId]: curr }, CONV_CONFIG.MAX_MESSAGES_PER_DEPT);
+            return { ...p, [deptId]: trimmed[deptId] || curr };
+          });
+        } catch(e) { console.log('Add AI msg error:', e); }
+      }
+      
+      // Analytics
+      if (typeof trackChatMessage === 'function') {
+        try { trackChatMessage(deptId); } catch(e) {}
+      }
+      if (topScore < GAPS_CONFIG.LOW_RELEVANCE_THRESHOLD && text.length >= GAPS_CONFIG.MIN_QUERY_LENGTH && typeof recordKnowledgeGap === 'function') {
+        try { recordKnowledgeGap(text, deptId, topScore); } catch(e) {}
+      }
+      if (typeof addToIntelligence === 'function') {
+        try { addToIntelligence({ sourceType: 'chat_query', sourceId: safeGenerateId('chat'), title: text.substring(0,50), content: `Q: ${text}\nA: ${clean.substring(0,500)}`, department: deptId, relevanceBoost: 1 }); } catch(e) {}
+      }
+      
+    } catch(err) {
+      console.error('Chat error:', err);
+      setDebugError(err.message || 'Error');
+      
+      const errMsg = { role: 'assistant', content: "I'm having trouble connecting. Please try again.", timestamp: new Date().toISOString() };
+      if (typeof setConversations === 'function') {
+        try {
+          setConversations(prev => {
+            const p = prev || {};
+            return { ...p, [deptId]: [...(Array.isArray(p[deptId]) ? p[deptId] : []), errMsg] };
+          });
+        } catch(e) {}
+      }
+    } finally {
+      setIsThinking(false);
+    }
+  };
+
+  const onSubmit = (e) => { if (e) e.preventDefault(); handleSend(input); };
+  const onClickSend = (e) => { if (e) e.preventDefault(); handleSend(input); };
+
+  // New chat
+  const startNew = () => {
+    try {
+      if (messages.length === 0) return;
+      
+      const first = messages.find(m => m && m.role === 'user');
+      const summary = first ? (first.content || '').substring(0, 80) : 'Chat';
+      
+      const log = {
+        id: safeGenerateId('log'),
+        departmentId: deptId,
+        departmentName: deptName,
+        messages: messages.map(m => ({ role: m?.role, content: m?.content, timestamp: m?.timestamp })),
+        summary,
+        messageCount: messages.length,
+        savedAt: new Date().toISOString(),
+        savedBy: 'You'
+      };
+      
+      if (typeof setChatLogs === 'function') {
+        setChatLogs(prev => {
+          const p = Array.isArray(prev) ? prev : [];
+          const other = p.filter(l => l && l.departmentId !== deptId);
+          const same = p.filter(l => l && l.departmentId === deptId);
+          return [...[log, ...same].slice(0, LOGS_CONFIG.MAX_LOGS_PER_DEPT), ...other].slice(0, LOGS_CONFIG.MAX_LOGS);
+        });
+      }
+      
+      if (typeof setConversations === 'function') {
+        setConversations(prev => ({ ...(prev || {}), [deptId]: [] }));
+      }
+      
+      setNotification('Chat saved');
+      setTimeout(() => setNotification(''), 2000);
+    } catch(e) {}
+  };
+
+  const deleteLog = (id) => {
+    if (typeof setChatLogs === 'function') {
+      try { setChatLogs(prev => (Array.isArray(prev) ? prev : []).filter(l => l && l.id !== id)); } catch(e) {}
+    }
+  };
+
+  const clearChat = () => {
+    if (confirm('Clear conversation?')) {
+      if (typeof setConversations === 'function') {
+        try { setConversations(prev => ({ ...(prev || {}), [deptId]: [] })); } catch(e) {}
+      }
     }
   };
 
   return (
-    <div style={{ 
-      minHeight: '100vh', 
-      background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)',
-      display: 'flex',
-      fontFamily: "'DM Sans', sans-serif",
-    }}>
-      {/* Mobile Header */}
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      {/* Header */}
       <div style={{
-        display: 'none',
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        height: 60,
-        background: 'rgba(15, 23, 42, 0.95)',
-        backdropFilter: 'blur(20px)',
-        borderBottom: '1px solid rgba(255,255,255,0.06)',
-        zIndex: 1000,
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: '0 16px',
-      }} className="mobile-header">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div style={{ 
-            width: 36, height: 36, 
-            background: 'linear-gradient(135deg, #3B82F6, #8B5CF6)',
-            borderRadius: 10,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontWeight: 700, fontSize: 18, color: 'white',
-          }}>E</div>
-          <span style={{ fontWeight: 600, fontSize: 18, color: '#E2E8F0' }}>Empire AI</span>
-        </div>
-        <button onClick={() => setMobileMenuOpen(!mobileMenuOpen)} style={{
-          background: 'none', border: 'none', color: '#E2E8F0', cursor: 'pointer', padding: 8
-        }}>
-          {mobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
-        </button>
-      </div>
-
-      {/* Sidebar */}
-      <aside style={{
-        width: sidebarCollapsed ? 72 : 260,
-        background: 'rgba(15, 23, 42, 0.6)',
-        backdropFilter: 'blur(20px)',
-        borderRight: '1px solid rgba(255,255,255,0.06)',
-        display: 'flex',
-        flexDirection: 'column',
-        transition: 'width 0.3s ease',
-        position: 'relative',
-        zIndex: 100,
+        padding: '16px 24px', borderBottom: '1px solid rgba(255,255,255,0.06)',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        background: 'rgba(30, 41, 59, 0.5)', flexWrap: 'wrap', gap: 8,
       }}>
-        {/* Logo */}
-        <div style={{ 
-          padding: sidebarCollapsed ? '20px 16px' : '20px 24px', 
-          borderBottom: '1px solid rgba(255,255,255,0.06)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 12,
-        }}>
-          <div style={{ 
-            width: 40, height: 40, 
-            background: 'linear-gradient(135deg, #3B82F6, #8B5CF6)',
-            borderRadius: 12,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontWeight: 700, fontSize: 20, color: 'white',
-            flexShrink: 0,
-          }}>E</div>
-          {!sidebarCollapsed && (
-            <div>
-              <div style={{ fontWeight: 600, fontSize: 18, color: '#E2E8F0' }}>Empire AI</div>
-              <div style={{ fontSize: 11, color: '#64748B' }}>Operations Platform</div>
-            </div>
-          )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 40, height: 40, borderRadius: 10, background: activeDepartment?.color || '#3B82F6', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <MessageSquare size={20} color="white" />
+          </div>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 600, color: '#E2E8F0' }}>{deptName}</div>
+            <div style={{ fontSize: 12, color: '#64748B' }}>{activeDepartment?.description || 'General'}</div>
+          </div>
         </div>
-
-        {/* Nav Items */}
-        <nav style={{ flex: 1, padding: '16px 12px', overflowY: 'auto' }}>
-          {/* Dashboard */}
-          {navItems.filter(item => item.id === 'dashboard').map(item => (
-            <button
-              key={item.id}
-              onClick={() => { setCurrentPage(item.id); setActiveDepartment(null); }}
-              style={{
-                width: '100%',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 12,
-                padding: sidebarCollapsed ? '12px' : '12px 16px',
-                marginBottom: 4,
-                background: currentPage === item.id ? 'rgba(59, 130, 246, 0.1)' : 'transparent',
-                border: 'none',
-                borderRadius: 10,
-                color: currentPage === item.id ? '#3B82F6' : '#94A3B8',
-                cursor: 'pointer',
-                transition: 'all 0.2s',
-                justifyContent: sidebarCollapsed ? 'center' : 'flex-start',
-                position: 'relative',
-              }}
-            >
-              <item.icon size={20} />
-              {!sidebarCollapsed && <span style={{ fontSize: 14, fontWeight: 500 }}>{item.label}</span>}
-            </button>
-          ))}
-
-          {/* Voice Mode Button */}
-          <button
-            onClick={() => setShowVoiceModal(true)}
-            style={{
-              width: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 12,
-              padding: sidebarCollapsed ? '12px' : '12px 16px',
-              marginBottom: 4,
-              background: 'rgba(16, 185, 129, 0.1)',
-              border: '1px solid rgba(16, 185, 129, 0.2)',
-              borderRadius: 10,
-              color: '#10B981',
+        
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          {/* Knowledge indicator */}
+          <button 
+            onClick={() => setShowDebug(!showDebug)}
+            style={{ 
+              padding: '4px 10px', 
+              background: knowledgeDebug.deptKnowledge > 0 || knowledgeDebug.deptDocs > 0 ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)', 
+              borderRadius: 12, 
+              fontSize: 11, 
+              color: knowledgeDebug.deptKnowledge > 0 || knowledgeDebug.deptDocs > 0 ? '#10B981' : '#EF4444',
+              border: 'none',
               cursor: 'pointer',
-              justifyContent: sidebarCollapsed ? 'center' : 'flex-start',
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: 4 
             }}
           >
-            <Mic size={20} />
-            {!sidebarCollapsed && <span style={{ fontSize: 14, fontWeight: 500 }}>Voice Mode</span>}
+            <FileText size={12} /> 
+            {knowledgeDebug.deptKnowledge + knowledgeDebug.deptDocs} sources
           </button>
-
-          {/* Remaining Nav Items */}
-          {navItems.filter(item => item.id !== 'dashboard').map(item => (
-            <button
-              key={item.id}
-              onClick={() => { setCurrentPage(item.id); setActiveDepartment(null); }}
-              style={{
-                width: '100%',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 12,
-                padding: sidebarCollapsed ? '12px' : '12px 16px',
-                marginBottom: 4,
-                background: currentPage === item.id ? 'rgba(59, 130, 246, 0.1)' : 'transparent',
-                border: 'none',
-                borderRadius: 10,
-                color: currentPage === item.id ? '#3B82F6' : '#94A3B8',
-                cursor: 'pointer',
-                transition: 'all 0.2s',
-                justifyContent: sidebarCollapsed ? 'center' : 'flex-start',
-                position: 'relative',
-              }}
-            >
-              <item.icon size={20} />
-              {!sidebarCollapsed && <span style={{ fontSize: 14, fontWeight: 500 }}>{item.label}</span>}
-              {item.badge > 0 && (
-                <span style={{
-                  position: sidebarCollapsed ? 'absolute' : 'relative',
-                  top: sidebarCollapsed ? 4 : 'auto',
-                  right: sidebarCollapsed ? 4 : 'auto',
-                  marginLeft: sidebarCollapsed ? 0 : 'auto',
-                  background: '#EF4444',
-                  color: 'white',
-                  fontSize: 10,
-                  fontWeight: 600,
-                  padding: '2px 6px',
-                  borderRadius: 10,
-                  minWidth: 18,
-                  textAlign: 'center',
-                }}>{item.badge}</span>
-              )}
-            </button>
-          ))}
-
-          {/* Departments Section */}
-          {!sidebarCollapsed && (
-            <div style={{ marginTop: 24 }}>
-              <div style={{ 
-                fontSize: 11, 
-                fontWeight: 600, 
-                color: '#64748B', 
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em',
-                padding: '0 16px',
-                marginBottom: 8,
-              }}>Departments</div>
-              {departments.map(dept => (
-                <button
-                  key={dept.id}
-                  onClick={() => handleDepartmentClick(dept)}
-                  style={{
-                    width: '100%',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 12,
-                    padding: '10px 16px',
-                    marginBottom: 2,
-                    background: activeDepartment?.id === dept.id ? 'rgba(59, 130, 246, 0.1)' : 'transparent',
-                    border: 'none',
-                    borderRadius: 8,
-                    color: activeDepartment?.id === dept.id ? '#3B82F6' : '#94A3B8',
-                    cursor: 'pointer',
-                    textAlign: 'left',
-                  }}
-                >
-                  <span style={{ 
-                    width: 28, height: 28, 
-                    background: `${dept.color}20`,
-                    borderRadius: 6,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    color: dept.color,
-                  }}>
-                    {renderDeptIcon(dept.icon, 14)}
+          
+          {ragInfo.active && (
+            <div style={{ padding: '4px 10px', background: ragInfo.cached ? 'rgba(139,92,246,0.2)' : 'rgba(59,130,246,0.2)', borderRadius: 12, fontSize: 11, color: ragInfo.cached ? '#A78BFA' : '#60A5FA', display: 'flex', alignItems: 'center', gap: 4 }}>
+              <Database size={12} /> RAG {ragInfo.cached ? '(Cached)' : ''}
+            </div>
+          )}
+          
+          <button onClick={() => setSearchAllDepts(!searchAllDepts)} style={{
+            padding: '6px 12px', background: searchAllDepts ? 'rgba(59,130,246,0.2)' : 'rgba(255,255,255,0.05)',
+            border: `1px solid ${searchAllDepts ? 'rgba(59,130,246,0.3)' : 'rgba(255,255,255,0.1)'}`,
+            borderRadius: 8, color: searchAllDepts ? '#60A5FA' : '#94A3B8', fontSize: 12, cursor: 'pointer',
+            display: 'flex', alignItems: 'center',
+          }}>
+            {searchAllDepts ? <Globe size={14} style={{marginRight:4}}/> : <Building size={14} style={{marginRight:4}}/>}
+            {searchAllDepts ? 'All Depts' : 'This Dept'}
+          </button>
+          
+          {messages.length > 0 && (
+            <>
+              <span style={{ fontSize: 11, color: '#64748B' }}>{messages.length}/{CONV_CONFIG.MAX_MESSAGES_PER_DEPT}</span>
+              <button onClick={startNew} style={{ padding: '6px 12px', background: 'rgba(59,130,246,0.2)', border: '1px solid rgba(59,130,246,0.3)', borderRadius: 8, color: '#60A5FA', fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
+                <Plus size={14} style={{marginRight:4}}/> New
+              </button>
+              <button onClick={clearChat} style={{ padding: '6px 12px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 8, color: '#EF4444', fontSize: 12, cursor: 'pointer' }}>
+                <Trash2 size={14} />
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+      
+      {/* Debug Panel */}
+      {showDebug && (
+        <div style={{ padding: '12px 24px', background: 'rgba(15,23,42,0.8)', borderBottom: '1px solid rgba(255,255,255,0.06)', fontSize: 12 }}>
+          <div style={{ color: '#94A3B8', marginBottom: 8 }}>Knowledge Debug ({deptName}):</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 8 }}>
+            <div style={{ padding: 8, background: 'rgba(255,255,255,0.05)', borderRadius: 6 }}>
+              <div style={{ color: '#64748B' }}>Dept Knowledge</div>
+              <div style={{ color: '#E2E8F0', fontWeight: 600 }}>{knowledgeDebug.deptKnowledge}</div>
+            </div>
+            <div style={{ padding: 8, background: 'rgba(255,255,255,0.05)', borderRadius: 6 }}>
+              <div style={{ color: '#64748B' }}>Dept Docs</div>
+              <div style={{ color: '#E2E8F0', fontWeight: 600 }}>{knowledgeDebug.deptDocs}</div>
+            </div>
+            <div style={{ padding: 8, background: 'rgba(255,255,255,0.05)', borderRadius: 6 }}>
+              <div style={{ color: '#64748B' }}>Total Knowledge</div>
+              <div style={{ color: '#E2E8F0', fontWeight: 600 }}>{knowledgeDebug.totalKnowledge}</div>
+            </div>
+            <div style={{ padding: 8, background: 'rgba(255,255,255,0.05)', borderRadius: 6 }}>
+              <div style={{ color: '#64748B' }}>Total Docs</div>
+              <div style={{ color: '#E2E8F0', fontWeight: 600 }}>{knowledgeDebug.totalDocs}</div>
+            </div>
+            <div style={{ padding: 8, background: 'rgba(255,255,255,0.05)', borderRadius: 6 }}>
+              <div style={{ color: '#64748B' }}>Intelligence</div>
+              <div style={{ color: '#E2E8F0', fontWeight: 600 }}>{knowledgeDebug.totalIntelligence}</div>
+            </div>
+            <div style={{ padding: 8, background: 'rgba(255,255,255,0.05)', borderRadius: 6 }}>
+              <div style={{ color: '#64748B' }}>Issues</div>
+              <div style={{ color: '#E2E8F0', fontWeight: 600 }}>{knowledgeDebug.totalIssues}</div>
+            </div>
+          </div>
+          {/* Doc details */}
+          {knowledgeDebug.docDetails && knowledgeDebug.docDetails.length > 0 && (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ color: '#94A3B8', marginBottom: 6 }}>Connected Docs Content:</div>
+              {knowledgeDebug.docDetails.map((doc, i) => (
+                <div key={i} style={{ padding: '6px 10px', background: 'rgba(255,255,255,0.03)', borderRadius: 4, marginBottom: 4, display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: '#E2E8F0' }}>{doc.name}</span>
+                  <span style={{ color: doc.chars > 50000 ? '#10B981' : doc.chars > 10000 ? '#F59E0B' : '#EF4444' }}>
+                    {doc.chars.toLocaleString()} chars | ~{doc.rows} rows | {doc.dept}
                   </span>
-                  <span style={{ fontSize: 13, fontWeight: 500, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {dept.name}
-                  </span>
-                </button>
+                </div>
               ))}
             </div>
           )}
-        </nav>
-
-        {/* Collapse Toggle */}
-        <button
-          onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-          style={{
-            position: 'absolute',
-            right: -12,
-            top: '50%',
-            transform: 'translateY(-50%)',
-            width: 24,
-            height: 24,
-            background: '#1E293B',
-            border: '1px solid rgba(255,255,255,0.1)',
-            borderRadius: '50%',
-            color: '#94A3B8',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-        >
-          {sidebarCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
-        </button>
-      </aside>
-
-      {/* Main Content */}
-      <main style={{ 
-        flex: 1, 
-        overflow: 'auto',
-        padding: 24,
-      }}>
-        {renderPage()}
-      </main>
-
-      {/* Voice Modal */}
-      {showVoiceModal && (
-        <VoiceModal 
-          onClose={() => setShowVoiceModal(false)}
-          activeDepartment={activeDepartment || departments[0]}
-          systemInstructions={systemInstructions}
-          intelligenceIndex={intelligenceIndex}
-          queryIntelligence={queryIntelligence}
-          knowledge={knowledge}
-          connectedDocs={connectedDocs}
-          issues={issues}
-          setIssues={setIssues}
-          departments={departments}
-          logActivity={logActivity}
-          addToIntelligence={addToIntelligence}
-          recordKnowledgeGap={recordKnowledgeGap}
-          trackVoiceSession={trackVoiceSession}
-          trackSearch={trackSearch}
-          trackIssueCreated={trackIssueCreated}
-        />
+          {ragInfo.sources && ragInfo.sources.length > 0 && (
+            <div style={{ marginTop: 8, color: '#64748B' }}>
+              Last query sources: {ragInfo.sources.map(s => `${s.name}${s.chars ? ` (${s.chars.toLocaleString()} chars)` : ''}`).join(', ')}
+            </div>
+          )}
+        </div>
       )}
-
-      {/* Mobile Menu Overlay */}
-      {mobileMenuOpen && (
-        <div style={{
-          position: 'fixed',
-          top: 60,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: 'rgba(15, 23, 42, 0.98)',
-          zIndex: 999,
-          padding: 20,
-          overflowY: 'auto',
-        }}>
-          {navItems.map(item => (
-            <button
-              key={item.id}
-              onClick={() => { setCurrentPage(item.id); setActiveDepartment(null); setMobileMenuOpen(false); }}
-              style={{
-                width: '100%',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 16,
-                padding: '16px 20px',
-                marginBottom: 8,
-                background: currentPage === item.id ? 'rgba(59, 130, 246, 0.1)' : 'transparent',
-                border: 'none',
-                borderRadius: 12,
-                color: currentPage === item.id ? '#3B82F6' : '#E2E8F0',
-                cursor: 'pointer',
-              }}
-            >
-              <item.icon size={22} />
-              <span style={{ fontSize: 16, fontWeight: 500 }}>{item.label}</span>
-            </button>
-          ))}
-          
-          <div style={{ marginTop: 24, borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: 24 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: '#64748B', marginBottom: 12 }}>DEPARTMENTS</div>
-            {departments.map(dept => (
-              <button
-                key={dept.id}
-                onClick={() => handleDepartmentClick(dept)}
-                style={{
-                  width: '100%',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 12,
-                  padding: '14px 16px',
-                  marginBottom: 4,
-                  background: activeDepartment?.id === dept.id ? 'rgba(59, 130, 246, 0.1)' : 'transparent',
-                  border: 'none',
-                  borderRadius: 10,
-                  color: activeDepartment?.id === dept.id ? '#3B82F6' : '#E2E8F0',
-                  cursor: 'pointer',
-                }}
-              >
-                <span style={{ color: dept.color }}>{renderDeptIcon(dept.icon, 18)}</span>
-                <span style={{ fontSize: 15 }}>{dept.name}</span>
-              </button>
-            ))}
+      
+      {/* Messages */}
+      <div style={{ flex: 1, overflowY: 'auto', padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {isReturning && messages.length > 0 && (
+          <div style={{ textAlign: 'center', padding: '8px 16px', background: 'rgba(139,92,246,0.1)', borderRadius: 8, fontSize: 12, color: '#A78BFA' }}>
+            Continuing session
           </div>
+        )}
+        
+        {messages.length === 0 && (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#64748B', textAlign: 'center', gap: 16 }}>
+            <div style={{ width: 80, height: 80, borderRadius: 20, background: 'rgba(59,130,246,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Sparkles size={40} color="#3B82F6" />
+            </div>
+            <div style={{ fontSize: 18, fontWeight: 600, color: '#E2E8F0' }}>Start a conversation</div>
+            <div style={{ fontSize: 13, maxWidth: 400 }}>
+              {knowledgeDebug.deptKnowledge + knowledgeDebug.deptDocs > 0 
+                ? `${knowledgeDebug.deptKnowledge + knowledgeDebug.deptDocs} knowledge sources available for ${deptName}`
+                : `Add documents or knowledge to ${deptName} to enhance responses`
+              }
+            </div>
+          </div>
+        )}
+        
+        {messages.map((msg, i) => msg && (
+          <div key={i} style={{ display: 'flex', justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start' }}>
+            <div style={{
+              maxWidth: '70%', padding: '12px 16px',
+              borderRadius: msg.role === 'user' ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
+              background: msg.role === 'user' ? 'linear-gradient(135deg, #3B82F6, #2563EB)' : 'rgba(30,41,59,0.8)',
+              color: '#E2E8F0', fontSize: 14, lineHeight: 1.6, whiteSpace: 'pre-wrap',
+            }}>
+              {msg.content || ''}
+              <div style={{ fontSize: 10, color: msg.role === 'user' ? 'rgba(255,255,255,0.6)' : '#64748B', marginTop: 6 }}>
+                {safeFormatTimestamp(msg.timestamp)}
+              </div>
+            </div>
+          </div>
+        ))}
+        
+        {isThinking && (
+          <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+            <div style={{ padding: '12px 16px', borderRadius: '16px 16px 16px 4px', background: 'rgba(30,41,59,0.8)', color: '#94A3B8', fontSize: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Loader2 size={16} className="spin" /> Thinking...
+            </div>
+          </div>
+        )}
+        
+        <div ref={messagesEndRef} />
+      </div>
+      
+      {/* Input */}
+      <form onSubmit={onSubmit} style={{ padding: '16px 24px', borderTop: '1px solid rgba(255,255,255,0.06)', background: 'rgba(30,41,59,0.5)' }}>
+        {debugError && (
+          <div style={{ marginBottom: 8, padding: 8, background: 'rgba(239,68,68,0.1)', borderRadius: 8, fontSize: 12, color: '#EF4444', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <AlertCircle size={14} /> Debug: {debugError}
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 12 }}>
+          <input
+            ref={inputRef}
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder={`Ask about ${deptName.toLowerCase()}...`}
+            disabled={isThinking}
+            style={{ flex: 1, padding: '12px 16px', background: 'rgba(15,23,42,0.8)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 12, color: '#E2E8F0', fontSize: 14, outline: 'none' }}
+          />
+          <button
+            type="button"
+            onClick={onClickSend}
+            disabled={!input.trim() || isThinking}
+            style={{
+              padding: '12px 20px',
+              background: input.trim() && !isThinking ? 'linear-gradient(135deg, #3B82F6, #2563EB)' : 'rgba(255,255,255,0.05)',
+              border: 'none', borderRadius: 12, color: input.trim() && !isThinking ? 'white' : '#64748B',
+              cursor: input.trim() && !isThinking ? 'pointer' : 'not-allowed',
+            }}
+          >
+            {isThinking ? <Loader2 size={18} className="spin" /> : <Send size={18} />}
+          </button>
+        </div>
+      </form>
+      
+      {/* Chat Logs */}
+      {deptChatLogs.length > 0 && (
+        <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', background: 'rgba(15,23,42,0.5)' }}>
+          <button onClick={() => setShowChatLogs(!showChatLogs)} style={{ width: '100%', padding: '12px 24px', background: 'transparent', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', color: '#94A3B8' }}>
+            <span><Calendar size={14} style={{marginRight:6}}/>History ({deptChatLogs.length})</span>
+            {showChatLogs ? <ChevronUp size={16}/> : <ChevronDown size={16}/>}
+          </button>
+          
+          {showChatLogs && (
+            <div style={{ maxHeight: 250, overflowY: 'auto', padding: '0 24px 16px' }}>
+              {deptChatLogs.map(log => log && (
+                <div key={log.id} onClick={() => setExpandedLog(expandedLog === log.id ? null : log.id)} style={{ padding: 10, background: 'rgba(30,41,59,0.5)', borderRadius: 8, marginBottom: 6, cursor: 'pointer', border: expandedLog === log.id ? '1px solid rgba(139,92,246,0.3)' : '1px solid rgba(255,255,255,0.05)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ fontSize: 13, color: '#E2E8F0' }}>{log.summary || 'Chat'}</span>
+                    <div>
+                      <span style={{ fontSize: 11, color: '#64748B', marginRight: 8 }}>{safeFormatDate(log.savedAt)}</span>
+                      <button onClick={(e) => { e.stopPropagation(); if(confirm('Delete?')) deleteLog(log.id); }} style={{ background: 'none', border: 'none', color: '#64748B', cursor: 'pointer' }}><Trash2 size={12}/></button>
+                    </div>
+                  </div>
+                  {expandedLog === log.id && Array.isArray(log.messages) && (
+                    <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                      {log.messages.slice(0,6).map((m, i) => m && (
+                        <div key={i} style={{ padding: '6px 10px', marginBottom: 4, borderRadius: 6, background: m.role === 'user' ? 'rgba(59,130,246,0.1)' : 'rgba(255,255,255,0.03)', borderLeft: `2px solid ${m.role === 'user' ? '#3B82F6' : '#64748B'}` }}>
+                          <div style={{ fontSize: 10, color: m.role === 'user' ? '#60A5FA' : '#94A3B8' }}>{m.role === 'user' ? 'You' : 'AI'}</div>
+                          <div style={{ fontSize: 11, color: '#E2E8F0' }}>{(m.content || '').substring(0, 200)}{(m.content || '').length > 200 ? '...' : ''}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      
+      {notification && (
+        <div style={{ position: 'fixed', bottom: 100, left: '50%', transform: 'translateX(-50%)', background: 'linear-gradient(135deg,#10B981,#059669)', color: 'white', padding: '12px 24px', borderRadius: 12, fontSize: 14, fontWeight: 500, zIndex: 1000, display: 'flex', alignItems: 'center' }}>
+          <Sparkles size={16} style={{marginRight:8}}/>{notification}
         </div>
       )}
 
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Mono&display=swap');
-        
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        
-        ::-webkit-scrollbar { width: 6px; height: 6px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
-        ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
-        
-        @media (max-width: 768px) {
-          .mobile-header { display: flex !important; }
-          aside { display: none !important; }
-          main { padding-top: 76px !important; }
-        }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        .spin { animation: spin 1s linear infinite; }
       `}</style>
     </div>
   );
