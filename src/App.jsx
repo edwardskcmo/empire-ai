@@ -1,5 +1,5 @@
 // Empire AI - Main Application Shell
-// Version 3.2 - With Chat Logs + SOP Builder Support
+// Version 3.3 - Fixed Dashboard Props
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { 
@@ -327,8 +327,9 @@ export default function App() {
             issues={issues}
             knowledge={knowledge}
             intelligenceIndex={intelligenceIndex}
+            teamMembers={teamMembers}
             onNavigate={setCurrentPage}
-            onQuickChat={handleQuickChat}
+            setActiveDepartment={setActiveDepartment}
             setShowVoiceModal={setShowVoiceModal}
           />
         );
