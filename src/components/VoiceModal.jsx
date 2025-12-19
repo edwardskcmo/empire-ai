@@ -1,30 +1,93 @@
 // Empire AI - Voice Modal (Carson)
-// Version 3.1 - Fixed: Slower speech, better pacing, no cut-offs
+// Version 3.2 - Fixes: Doc limit 100k, department filtering, error display, defensive imports
 
 import React, { useState, useRef, useEffect } from 'react';
-import { X, Mic, MicOff, Square, Volume2, VolumeX, Sparkles } from 'lucide-react';
-import { 
-  createIntelligenceItem, 
-  KNOWLEDGE_GAPS_CONFIG,
-  getCachedEmbedding,
-  setCachedEmbedding,
-} from '../utils';
+import { X, Mic, MicOff, Square, Volume2, VolumeX, Sparkles, AlertCircle } from 'lucide-react';
 
-// Voice configuration - adjust these to tune behavior
+// Defensive utils import with fallbacks
+let createIntelligenceItem, KNOWLEDGE_GAPS_CONFIG, getCachedEmbedding, setCachedEmbedding;
+
+try {
+  const utils = require('../utils');
+  createIntelligenceItem = utils.createIntelligenceItem;
+  KNOWLEDGE_GAPS_CONFIG = utils.KNOWLEDGE_GAPS_CONFIG;
+  getCachedEmbedding = utils.getCachedEmbedding;
+  setCachedEmbedding = utils.setCachedEmbedding;
+} catch (e) {
+  console.warn('Utils import failed, using fallbacks:', e);
+}
+
+// Fallback implementations
+if (!createIntelligenceItem) {
+  createIntelligenceItem = (sourceType, sourceId, title, content, department, tags, metadata, boost) => ({
+    id: `intel_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+    sourceType,
+    sourceId,
+    title,
+    content,
+    department,
+    tags: tags || [],
+    metadata: metadata || {},
+    relevanceBoost: boost || 1,
+    createdAt: new Date().toISOString(),
+  });
+}
+
+if (!KNOWLEDGE_GAPS_CONFIG) {
+  KNOWLEDGE_GAPS_CONFIG = {
+    LOW_RELEVANCE_THRESHOLD: 20,
+    MIN_QUERY_LENGTH: 10,
+  };
+}
+
+if (!getCachedEmbedding) {
+  getCachedEmbedding = () => null;
+}
+
+if (!setCachedEmbedding) {
+  setCachedEmbedding = () => {};
+}
+
+// Safe ID generator
+const safeGenerateId = (prefix = 'id') => {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+};
+
+// Voice configuration
 const VOICE_CONFIG = {
-  // How long to wait after Carson finishes speaking before listening again (ms)
   RESTART_DELAY: 2500,
-  
-  // How long to wait after user stops speaking before processing (ms)
   SILENCE_DELAY: 1500,
-  
-  // ElevenLabs voice settings
   ELEVENLABS: {
-    stability: 0.75,        // Higher = more consistent, calmer (0-1)
-    similarity_boost: 0.75, // Voice matching (0-1)
-    style: 0.0,             // Style exaggeration - keep low for natural
-    speed: 0.85,            // Slower than default (1.0) - range ~0.7-1.3
+    stability: 0.75,
+    similarity_boost: 0.75,
+    style: 0.0,
+    speed: 0.85,
   }
+};
+
+// Department matching helper (matches Chat.jsx logic)
+const matchesDepartment = (item, deptId, deptName) => {
+  if (!item) return false;
+  const itemDept = (item.department || '').toLowerCase();
+  
+  // Company-wide items match everything
+  if (itemDept === 'company-wide' || itemDept === 'general' || !itemDept) {
+    return true;
+  }
+  
+  // Check by ID
+  if (deptId && itemDept === deptId.toLowerCase()) {
+    return true;
+  }
+  
+  // Check by name
+  if (deptName) {
+    const deptNameLower = deptName.toLowerCase();
+    if (itemDept === deptNameLower) return true;
+    if (itemDept.includes(deptNameLower) || deptNameLower.includes(itemDept)) return true;
+  }
+  
+  return false;
 };
 
 export default function VoiceModal({
@@ -45,12 +108,13 @@ export default function VoiceModal({
   trackSearch,
   trackIssueCreated,
 }) {
-  const [status, setStatus] = useState('idle'); // idle, listening, processing, speaking
+  const [status, setStatus] = useState('idle');
   const [transcript, setTranscript] = useState('');
   const [response, setResponse] = useState('');
   const [isMuted, setIsMuted] = useState(false);
   const [debug, setDebug] = useState('Tap the mic to start');
   const [notification, setNotification] = useState(null);
+  const [errorMessage, setErrorMessage] = useState(null); // NEW: Error display
   
   const recognitionRef = useRef(null);
   const synthRef = useRef(null);
@@ -61,12 +125,23 @@ export default function VoiceModal({
   const sessionTrackedRef = useRef(false);
   const finalTranscriptRef = useRef('');
 
+  // Safe array check
+  const safeArray = (arr) => Array.isArray(arr) ? arr : [];
+
   // Track voice session once on mount
   useEffect(() => {
-    if (!sessionTrackedRef.current) {
-      trackVoiceSession();
-      sessionTrackedRef.current = true;
-      logActivity('Started voice session with Carson', 'voice', activeDepartment?.name);
+    try {
+      if (!sessionTrackedRef.current) {
+        if (typeof trackVoiceSession === 'function') {
+          trackVoiceSession();
+        }
+        sessionTrackedRef.current = true;
+        if (typeof logActivity === 'function') {
+          logActivity('Started voice session with Carson', 'voice', activeDepartment?.name);
+        }
+      }
+    } catch (e) {
+      console.error('Session tracking error:', e);
     }
   }, []);
 
@@ -76,39 +151,71 @@ export default function VoiceModal({
     let cacheHit = false;
     let maxScore = 0;
     
-    // Check embedding cache
-    const cachedEmb = getCachedEmbedding(query);
-    cacheHit = !!cachedEmb;
-    trackSearch(cacheHit);
-    
-    // Query intelligence
-    const relevantItems = queryIntelligence(intelligenceIndex, query, activeDepartment?.name, 10);
-    
-    if (relevantItems.length > 0) {
-      maxScore = relevantItems[0].score;
-      context += '\n\n=== RELEVANT KNOWLEDGE ===\n';
-      relevantItems.forEach((item, i) => {
-        context += `${i + 1}. ${item.title}: ${item.content?.substring(0, 200)}...\n`;
+    try {
+      // Check embedding cache
+      const cachedEmb = getCachedEmbedding(query);
+      cacheHit = !!cachedEmb;
+      if (typeof trackSearch === 'function') {
+        trackSearch(cacheHit);
+      }
+      
+      // Query intelligence - signature: (index, query, dept, limit)
+      const safeIndex = safeArray(intelligenceIndex);
+      let relevantItems = [];
+      
+      if (typeof queryIntelligence === 'function' && safeIndex.length > 0) {
+        try {
+          relevantItems = queryIntelligence(safeIndex, query, activeDepartment?.name, 10) || [];
+        } catch (e) {
+          console.error('queryIntelligence error:', e);
+          relevantItems = [];
+        }
+      }
+      
+      if (relevantItems.length > 0) {
+        maxScore = relevantItems[0].score || 0;
+        context += '\n\n=== RELEVANT KNOWLEDGE ===\n';
+        relevantItems.forEach((item, i) => {
+          const content = item.content || '';
+          context += `${i + 1}. ${item.title || 'Untitled'}: ${content.substring(0, 300)}...\n`;
+        });
+      }
+      
+      // Add connected docs - filtered by department, increased limit to 100k
+      const safeDocs = safeArray(connectedDocs);
+      const deptId = activeDepartment?.id || '';
+      const deptName = activeDepartment?.name || '';
+      
+      const relevantDocs = safeDocs.filter(d => {
+        if (d.status !== 'synced' || !d.content) return false;
+        return matchesDepartment(d, deptId, deptName);
       });
-    }
-    
-    // Add connected docs (full content)
-    const syncedDocs = connectedDocs.filter(d => d.status === 'synced' && d.content);
-    if (syncedDocs.length > 0) {
-      context += '\n\n=== SPREADSHEETS & DOCUMENTS ===\n';
-      syncedDocs.forEach(doc => {
-        context += `\n--- ${doc.name} ---\n`;
-        context += doc.content?.substring(0, 50000) + '\n';
+      
+      if (relevantDocs.length > 0) {
+        context += '\n\n=== SPREADSHEETS & DOCUMENTS ===\n';
+        relevantDocs.forEach(doc => {
+          context += `\n--- ${doc.name || 'Document'} ---\n`;
+          // Increased from 50,000 to 100,000 chars
+          context += (doc.content || '').substring(0, 100000) + '\n';
+        });
+      }
+      
+      // Add issues - filtered by department
+      const safeIssues = safeArray(issues);
+      const activeIssues = safeIssues.filter(i => {
+        if (i.archived || i.status === 'Resolved') return false;
+        return matchesDepartment(i, deptId, deptName);
       });
-    }
-    
-    // Add issues
-    const activeIssues = issues.filter(i => !i.archived && i.status !== 'Resolved');
-    if (activeIssues.length > 0) {
-      context += '\n\n=== ACTIVE ISSUES ===\n';
-      activeIssues.slice(0, 10).forEach((issue, i) => {
-        context += `${i + 1}. [${issue.priority}] ${issue.title} (${issue.department})\n`;
-      });
+      
+      if (activeIssues.length > 0) {
+        context += '\n\n=== ACTIVE ISSUES ===\n';
+        activeIssues.slice(0, 10).forEach((issue, i) => {
+          context += `${i + 1}. [${issue.priority || 'Medium'}] ${issue.title || 'Untitled'} (${issue.department || 'General'})\n`;
+        });
+      }
+    } catch (e) {
+      console.error('buildKnowledgeContext error:', e);
+      setErrorMessage(`Context build error: ${e.message}`);
     }
     
     return { context, maxScore };
@@ -116,6 +223,7 @@ export default function VoiceModal({
 
   // Parse issue from response
   const parseIssueFromResponse = (text) => {
+    if (!text) return null;
     const regex = /\[ISSUE_CREATED\]\s*(.+?)\s*\|\s*(.+?)\s*\|\s*(.+?)\s*\|\s*(.+?)\s*\[\/ISSUE_CREATED\]/i;
     const match = text.match(regex);
     if (match) {
@@ -131,38 +239,54 @@ export default function VoiceModal({
 
   // Create issue
   const createIssue = async (issueData) => {
-    const matchingDept = departments.find(d => 
-      d.name.toLowerCase().includes(issueData.department.toLowerCase())
-    );
-    
-    const newIssue = {
-      id: `issue_${Date.now()}`,
-      title: issueData.title,
-      description: issueData.description,
-      department: matchingDept?.name || activeDepartment?.name || 'General',
-      priority: ['High', 'Medium', 'Low'].includes(issueData.priority) ? issueData.priority : 'Medium',
-      status: 'Open',
-      assignee: '',
-      createdAt: new Date().toISOString(),
-      archived: false,
-    };
-    
-    setIssues(prev => [newIssue, ...prev]);
-    logActivity(`Created issue via voice: ${newIssue.title}`, 'issue', newIssue.department);
-    trackIssueCreated(newIssue.priority, newIssue.department);
-    
-    setNotification(`Issue created: "${newIssue.title}"`);
-    setTimeout(() => setNotification(null), 4000);
-    
-    return newIssue;
+    try {
+      const safeDepts = safeArray(departments);
+      const matchingDept = safeDepts.find(d => 
+        d.name && d.name.toLowerCase().includes(issueData.department.toLowerCase())
+      );
+      
+      const newIssue = {
+        id: safeGenerateId('issue'), // Consistent with Chat.jsx
+        title: issueData.title,
+        description: issueData.description,
+        department: matchingDept?.name || activeDepartment?.name || 'General',
+        priority: ['High', 'Medium', 'Low'].includes(issueData.priority) ? issueData.priority : 'Medium',
+        status: 'Open',
+        assignee: '',
+        createdAt: new Date().toISOString(),
+        archived: false,
+      };
+      
+      if (typeof setIssues === 'function') {
+        setIssues(prev => [newIssue, ...safeArray(prev)]);
+      }
+      
+      if (typeof logActivity === 'function') {
+        logActivity(`Created issue via voice: ${newIssue.title}`, 'issue', newIssue.department);
+      }
+      
+      if (typeof trackIssueCreated === 'function') {
+        trackIssueCreated(newIssue.priority, newIssue.department);
+      }
+      
+      setNotification(`Issue created: "${newIssue.title}"`);
+      setTimeout(() => setNotification(null), 4000);
+      
+      return newIssue;
+    } catch (e) {
+      console.error('createIssue error:', e);
+      setErrorMessage(`Issue creation error: ${e.message}`);
+      return null;
+    }
   };
 
   // Clean response
   const cleanResponse = (text) => {
+    if (!text) return '';
     return text.replace(/\[ISSUE_CREATED\][\s\S]*?\[\/ISSUE_CREATED\]/gi, '').trim();
   };
 
-  // Speak with ElevenLabs - with voice settings
+  // Speak with ElevenLabs
   const speakWithElevenLabs = async (text) => {
     if (isMuted) {
       setStatus('idle');
@@ -180,7 +304,6 @@ export default function VoiceModal({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           text,
-          // Pass voice settings to API
           voice_settings: VOICE_CONFIG.ELEVENLABS
         }),
       });
@@ -210,7 +333,6 @@ export default function VoiceModal({
         setStatus('idle');
         setDebug('Your turn. Tap mic or just start speaking...');
         if (shouldAutoRestartRef.current) {
-          // Wait longer before restarting - gives user time to think
           autoRestartTimeoutRef.current = setTimeout(() => {
             setDebug('Listening...');
             startListening();
@@ -222,7 +344,7 @@ export default function VoiceModal({
       setStatus('speaking');
       
     } catch (error) {
-      console.log('ElevenLabs failed, using browser speech');
+      console.log('ElevenLabs failed, using browser speech:', error);
       fallbackToWebSpeech(text);
     }
   };
@@ -234,7 +356,7 @@ export default function VoiceModal({
     }
     
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 0.9; // Slightly slower
+    utterance.rate = 0.9;
     utterance.pitch = 1;
     
     utterance.onend = () => {
@@ -263,21 +385,21 @@ export default function VoiceModal({
 
   // Start listening
   const startListening = () => {
-    // Clear any pending timeouts
     clearAllTimeouts();
+    setErrorMessage(null); // Clear any previous errors
     
     if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
       setDebug('Browser not supported. Try Chrome or Edge.');
+      setErrorMessage('Speech recognition not supported in this browser');
       return;
     }
     
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     recognitionRef.current = new SpeechRecognition();
-    recognitionRef.current.continuous = true; // Keep listening for multiple phrases
+    recognitionRef.current.continuous = true;
     recognitionRef.current.interimResults = true;
     recognitionRef.current.lang = 'en-US';
     
-    // Reset transcript holder
     finalTranscriptRef.current = '';
     
     recognitionRef.current.onstart = () => {
@@ -288,7 +410,6 @@ export default function VoiceModal({
     };
     
     recognitionRef.current.onresult = (event) => {
-      // Clear any existing silence timeout - user is still speaking
       if (silenceTimeoutRef.current) {
         clearTimeout(silenceTimeoutRef.current);
       }
@@ -304,14 +425,11 @@ export default function VoiceModal({
         }
       }
       
-      // Show what's being heard
       const displayText = finalTranscriptRef.current + interimTranscript;
       setTranscript(displayText.trim());
       
-      // Set a silence timeout - if user stops for X seconds, process
       if (finalTranscriptRef.current.trim()) {
         silenceTimeoutRef.current = setTimeout(() => {
-          // User has paused - stop recognition and process
           if (recognitionRef.current) {
             recognitionRef.current.stop();
           }
@@ -330,15 +448,14 @@ export default function VoiceModal({
         // User stopped - this is fine
       } else {
         setDebug(`Error: ${event.error}`);
+        setErrorMessage(`Speech recognition error: ${event.error}`);
       }
       setStatus('idle');
     };
     
     recognitionRef.current.onend = () => {
-      // Check if we have final transcript to process
       const finalText = finalTranscriptRef.current.trim();
       if (finalText && status === 'listening') {
-        // Process if we haven't already started processing
         processQuery(finalText);
       } else if (status === 'listening') {
         setStatus('idle');
@@ -350,12 +467,12 @@ export default function VoiceModal({
       recognitionRef.current.start();
     } catch (e) {
       setDebug('Could not start listening. Try again.');
+      setErrorMessage(`Start listening error: ${e.message}`);
     }
   };
 
   // Process query
   const processQuery = async (query) => {
-    // Stop listening while processing
     if (recognitionRef.current) {
       try {
         recognitionRef.current.stop();
@@ -364,13 +481,17 @@ export default function VoiceModal({
     
     setStatus('processing');
     setDebug('Thinking...');
+    setErrorMessage(null);
     
     try {
       const { context, maxScore } = await buildKnowledgeContext(query);
       
       // Record knowledge gap if low relevance
-      if (maxScore < KNOWLEDGE_GAPS_CONFIG.LOW_RELEVANCE_THRESHOLD && query.length >= KNOWLEDGE_GAPS_CONFIG.MIN_QUERY_LENGTH) {
-        recordKnowledgeGap(query, maxScore, activeDepartment?.name || 'General');
+      if (maxScore < KNOWLEDGE_GAPS_CONFIG.LOW_RELEVANCE_THRESHOLD && 
+          query.length >= KNOWLEDGE_GAPS_CONFIG.MIN_QUERY_LENGTH) {
+        if (typeof recordKnowledgeGap === 'function') {
+          recordKnowledgeGap(query, maxScore, activeDepartment?.name || 'General');
+        }
       }
       
       const deptInstructions = activeDepartment?.instructions || '';
@@ -418,7 +539,7 @@ Example good responses:
       });
       
       if (!response.ok) {
-        throw new Error('API error');
+        throw new Error(`API error: ${response.status}`);
       }
       
       const data = await response.json();
@@ -434,16 +555,22 @@ Example good responses:
       setResponse(aiResponse);
       
       // Log to intelligence
-      addToIntelligence(createIntelligenceItem(
-        'voice_interaction',
-        `voice_${Date.now()}`,
-        `Voice Q: ${query.substring(0, 50)}`,
-        `User asked: ${query}\nCarson: ${aiResponse}`,
-        activeDepartment?.name || 'General',
-        ['voice', 'conversation'],
-        {},
-        1
-      ));
+      if (typeof addToIntelligence === 'function') {
+        try {
+          addToIntelligence(createIntelligenceItem(
+            'voice_interaction',
+            safeGenerateId('voice'),
+            `Voice Q: ${query.substring(0, 50)}`,
+            `User asked: ${query}\nCarson: ${aiResponse}`,
+            activeDepartment?.name || 'General',
+            ['voice', 'conversation'],
+            {},
+            1
+          ));
+        } catch (e) {
+          console.error('addToIntelligence error:', e);
+        }
+      }
       
       // Speak the response
       speakWithElevenLabs(aiResponse);
@@ -451,6 +578,7 @@ Example good responses:
     } catch (error) {
       console.error('Voice processing error:', error);
       setDebug(`Error: ${error.message}`);
+      setErrorMessage(`Processing error: ${error.message}`);
       const errorMsg = "Sorry, I'm having trouble right now. Can you try again?";
       setResponse(errorMsg);
       speakWithElevenLabs(errorMsg);
@@ -551,6 +679,40 @@ Example good responses:
           {activeDepartment?.name || 'General'} • ElevenLabs Voice
         </p>
       </div>
+
+      {/* Error Display - NEW */}
+      {errorMessage && (
+        <div style={{
+          position: 'absolute',
+          top: 80,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          background: 'rgba(239, 68, 68, 0.2)',
+          border: '1px solid rgba(239, 68, 68, 0.4)',
+          borderRadius: 8,
+          padding: '8px 16px',
+          maxWidth: 400,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+        }}>
+          <AlertCircle size={16} color="#EF4444" />
+          <span style={{ color: '#FCA5A5', fontSize: 12 }}>{errorMessage}</span>
+          <button
+            onClick={() => setErrorMessage(null)}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: '#FCA5A5',
+              cursor: 'pointer',
+              padding: 0,
+              marginLeft: 8,
+            }}
+          >
+            <X size={14} />
+          </button>
+        </div>
+      )}
 
       {/* Orb */}
       <div style={{
