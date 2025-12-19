@@ -1,15 +1,16 @@
 import React, { useState } from 'react';
 import { 
   LayoutDashboard, MessageSquare, Lightbulb, Upload, Mic, AlertTriangle,
-  Clock, Send, TrendingUp, Users, BookOpen, CheckCircle
+  Clock, Send, TrendingUp, Users, BookOpen, CheckCircle, Database
 } from 'lucide-react';
 
 export default function Dashboard({ 
   activities, 
   knowledge, 
   issues,
-  conversations,
-  setCurrentPage,
+  intelligenceIndex,
+  teamMembers,
+  onNavigate,
   setActiveDepartment,
   departments,
   setShowVoiceModal,
@@ -17,25 +18,27 @@ export default function Dashboard({
 }) {
   const [quickMessage, setQuickMessage] = useState('');
 
-  // Calculate stats
-  const activeProjects = issues.filter(i => !i.archived && i.status !== 'Resolved').length;
-  const openIssues = issues.filter(i => !i.archived && i.status === 'Open').length;
-  const knowledgeCount = knowledge.length;
-  const teamOnline = 3; // Placeholder
+  // Calculate stats from actual data
+  const openIssues = issues?.filter(i => !i.archived && i.status === 'Open').length || 0;
+  const inProgressIssues = issues?.filter(i => !i.archived && i.status === 'In Progress').length || 0;
+  const totalActiveIssues = issues?.filter(i => !i.archived && i.status !== 'Resolved').length || 0;
+  const knowledgeCount = knowledge?.length || 0;
+  const intelligenceCount = intelligenceIndex?.length || 0;
+  const teamCount = teamMembers?.length || 1;
 
   const stats = [
-    { label: 'Active Projects', value: activeProjects, icon: TrendingUp, color: '#3B82F6' },
+    { label: 'Active Issues', value: totalActiveIssues, icon: TrendingUp, color: '#3B82F6' },
     { label: 'Open Issues', value: openIssues, icon: AlertTriangle, color: '#F59E0B' },
     { label: 'Knowledge Items', value: knowledgeCount, icon: BookOpen, color: '#8B5CF6' },
-    { label: 'Team Online', value: teamOnline, icon: Users, color: '#10B981' },
+    { label: 'Intelligence Items', value: intelligenceCount, icon: Database, color: '#10B981' },
   ];
 
   const quickActions = [
-    { label: 'Start Chat', icon: MessageSquare, action: () => setCurrentPage('chat'), color: '#3B82F6' },
-    { label: 'Log Insight', icon: Lightbulb, action: () => setCurrentPage('knowledge'), color: '#F59E0B' },
-    { label: 'Upload Doc', icon: Upload, action: () => setCurrentPage('knowledge'), color: '#8B5CF6' },
+    { label: 'Start Chat', icon: MessageSquare, action: () => onNavigate('chat'), color: '#3B82F6' },
+    { label: 'Log Insight', icon: Lightbulb, action: () => onNavigate('knowledge'), color: '#F59E0B' },
+    { label: 'Upload Doc', icon: Upload, action: () => onNavigate('knowledge'), color: '#8B5CF6' },
     { label: 'Voice Mode', icon: Mic, action: () => setShowVoiceModal(true), color: '#10B981' },
-    { label: 'Report Issue', icon: AlertTriangle, action: () => setCurrentPage('issues'), color: '#EF4444' },
+    { label: 'Report Issue', icon: AlertTriangle, action: () => onNavigate('issues'), color: '#EF4444' },
   ];
 
   const suggestions = [
@@ -49,18 +52,23 @@ export default function Dashboard({
     if (!quickMessage.trim()) return;
     
     // Find general department or first available
-    const generalDept = departments.find(d => d.name.toLowerCase().includes('company') || d.name.toLowerCase().includes('general')) || departments[0];
+    const generalDept = departments?.find(d => 
+      d.name.toLowerCase().includes('company') || 
+      d.name.toLowerCase().includes('general')
+    ) || departments?.[0];
     
-    if (generalDept) {
+    if (generalDept && setActiveDepartment && onNavigate) {
       // Store the message to be sent
       sessionStorage.setItem('pendingChatMessage', quickMessage.trim());
       
       // Set the department and navigate
       setActiveDepartment(generalDept);
-      setCurrentPage('chat');
+      onNavigate('chat');
       
       // Log the activity
-      logActivity('Started quick chat from dashboard', 'chat');
+      if (logActivity) {
+        logActivity('Started quick chat from dashboard', 'chat');
+      }
     }
     
     setQuickMessage('');
@@ -78,6 +86,7 @@ export default function Dashboard({
   };
 
   const formatTimeAgo = (dateString) => {
+    if (!dateString) return '';
     const now = new Date();
     const date = new Date(dateString);
     const seconds = Math.floor((now - date) / 1000);
@@ -99,7 +108,7 @@ export default function Dashboard({
         <p style={{ color: '#94A3B8', marginTop: '4px' }}>Welcome back to Empire AI</p>
       </div>
 
-      {/* Quick Chat Box - NOW AT TOP */}
+      {/* Quick Chat Box */}
       <div style={{
         background: 'rgba(30, 41, 59, 0.8)',
         borderRadius: '12px',
@@ -184,7 +193,7 @@ export default function Dashboard({
         </div>
       </div>
 
-      {/* Stats Cards - COMPACT VERSION */}
+      {/* Stats Cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px', marginBottom: '20px' }}>
         {stats.map((stat, i) => (
           <div key={i} style={{
@@ -241,7 +250,7 @@ export default function Dashboard({
           </h3>
           
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            {activities.slice(0, 6).map((activity, i) => (
+            {activities?.slice(0, 6).map((activity, i) => (
               <div key={i} style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -277,7 +286,7 @@ export default function Dashboard({
               </div>
             ))}
             
-            {activities.length === 0 && (
+            {(!activities || activities.length === 0) && (
               <p style={{ color: '#64748B', fontSize: '14px', textAlign: 'center', padding: '20px' }}>
                 No recent activity
               </p>
