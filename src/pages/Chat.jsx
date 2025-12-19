@@ -1,5 +1,5 @@
 // Empire AI - Chat Interface
-// Version 3.4 - Fixed Send Button Click Handler
+// Version 3.5 - Fixed Null Safety & Error Handling
 
 import React, { useState, useEffect, useRef } from 'react';
 import { 
@@ -23,22 +23,22 @@ import {
 
 export default function Chat({
   activeDepartment,
-  conversations,
+  conversations = {},
   setConversations,
-  systemInstructions,
-  intelligenceIndex,
+  systemInstructions = '',
+  intelligenceIndex = [],
   queryIntelligence,
-  knowledge,
-  connectedDocs,
-  issues,
+  knowledge = [],
+  connectedDocs = [],
+  issues = [],
   setIssues,
-  departments,
+  departments = [],
   logActivity,
   addToIntelligence,
   trackSearch,
   trackChatMessage,
   recordKnowledgeGap,
-  chatLogs,
+  chatLogs = [],
   setChatLogs,
 }) {
   const [input, setInput] = useState('');
@@ -55,10 +55,10 @@ export default function Chat({
   
   const deptId = activeDepartment?.id || 'general';
   const deptName = activeDepartment?.name || 'General';
-  const messages = conversations[deptId] || [];
+  const messages = conversations?.[deptId] || [];
   
   // Filter chat logs for current department
-  const deptChatLogs = chatLogs.filter(log => log.departmentId === deptId);
+  const deptChatLogs = (chatLogs || []).filter(log => log.departmentId === deptId);
 
   // Scroll to bottom when messages change
   useEffect(() => {
@@ -81,7 +81,7 @@ export default function Chat({
       // Small delay to let state settle, then send
       setTimeout(() => {
         sendMessageDirect(pendingFromStorage);
-      }, 200);
+      }, 300);
     }
   }, [deptId]);
   
@@ -92,7 +92,7 @@ export default function Chat({
 
   // Check for session continuation
   const lastMessageTime = messages.length > 0 
-    ? new Date(messages[messages.length - 1].timestamp || Date.now())
+    ? new Date(messages[messages.length - 1]?.timestamp || Date.now())
     : null;
   const isReturningSession = lastMessageTime && 
     (Date.now() - lastMessageTime.getTime()) > 60 * 60 * 1000; // 1 hour
@@ -104,7 +104,7 @@ export default function Chat({
     let usedCache = false;
     
     // 1. Query Central Intelligence with semantic search
-    if (intelligenceIndex.length > 0) {
+    if (intelligenceIndex && intelligenceIndex.length > 0 && queryIntelligence) {
       try {
         // Check embedding cache first
         const cachedEmbedding = getCachedEmbedding(query);
@@ -138,8 +138,8 @@ export default function Chat({
           queryEmbedding
         );
         
-        if (results.length > 0) {
-          topScore = results[0].score || 0;
+        if (results && results.length > 0) {
+          topScore = results[0]?.score || 0;
           context += '\n=== RELEVANT COMPANY KNOWLEDGE ===\n';
           results.slice(0, 10).forEach((item, i) => {
             const label = item.sourceType === 'resolved_issue' ? 'Resolved Issue' :
@@ -147,7 +147,7 @@ export default function Chat({
                           item.sourceType === 'activity_log' ? 'Activity' :
                           item.sourceType === 'sop_created' ? 'SOP' :
                           'Intelligence';
-            context += `${i + 1}. [${label}] ${item.title}: ${item.content?.substring(0, 300)}...\n`;
+            context += `${i + 1}. [${label}] ${item.title || 'Untitled'}: ${(item.content || '').substring(0, 300)}...\n`;
           });
         }
       } catch (e) {
@@ -156,7 +156,7 @@ export default function Chat({
     }
     
     // 2. Include connected Google Docs/Sheets
-    if (connectedDocs?.length > 0) {
+    if (connectedDocs && connectedDocs.length > 0) {
       const syncedDocs = connectedDocs.filter(doc => 
         doc.status === 'synced' && doc.content &&
         (searchAllDepts || doc.department === deptId)
@@ -165,13 +165,13 @@ export default function Chat({
       if (syncedDocs.length > 0) {
         context += '\n=== CONNECTED GOOGLE DOCS/SHEETS ===\n';
         syncedDocs.forEach(doc => {
-          context += `\n[${doc.name}]:\n${doc.content?.substring(0, 50000)}\n`;
+          context += `\n[${doc.name || 'Untitled'}]:\n${(doc.content || '').substring(0, 50000)}\n`;
         });
       }
     }
     
     // 3. Include knowledge base items
-    if (knowledge?.length > 0) {
+    if (knowledge && knowledge.length > 0) {
       const deptKnowledge = searchAllDepts 
         ? knowledge 
         : knowledge.filter(k => k.department === deptId);
@@ -179,13 +179,13 @@ export default function Chat({
       if (deptKnowledge.length > 0) {
         context += '\n=== DEPARTMENT KNOWLEDGE BASE ===\n';
         deptKnowledge.slice(0, 10).forEach(item => {
-          context += `- ${item.title}: ${item.content?.substring(0, 500)}...\n`;
+          context += `- ${item.title || 'Untitled'}: ${(item.content || '').substring(0, 500)}...\n`;
         });
       }
     }
     
     // 4. Include active issues
-    if (issues?.length > 0) {
+    if (issues && issues.length > 0) {
       const activeIssues = issues.filter(i => !i.archived);
       const relevantIssues = searchAllDepts 
         ? activeIssues 
@@ -194,7 +194,7 @@ export default function Chat({
       if (relevantIssues.length > 0) {
         context += '\n=== ISSUES BOARD (Active Issues) ===\n';
         relevantIssues.forEach((issue, i) => {
-          context += `${i + 1}. [${issue.status}] [${issue.priority}] ${issue.title} (Dept: ${issue.department}) - Assigned to: ${issue.assignee || 'Unassigned'}\n`;
+          context += `${i + 1}. [${issue.status || 'Open'}] [${issue.priority || 'Medium'}] ${issue.title || 'Untitled'} (Dept: ${issue.department || 'General'}) - Assigned to: ${issue.assignee || 'Unassigned'}\n`;
           if (issue.description) {
             context += `   Description: ${issue.description}\n`;
           }
@@ -207,7 +207,7 @@ export default function Chat({
       if (resolvedIssues.length > 0) {
         context += '\n=== RESOLVED/ARCHIVED ISSUES ===\n';
         resolvedIssues.slice(0, 5).forEach((issue, i) => {
-          context += `${i + 1}. ${issue.title} - Resolved\n`;
+          context += `${i + 1}. ${issue.title || 'Untitled'} - Resolved\n`;
           if (issue.resolutionNotes) {
             context += `   Resolution: ${issue.resolutionNotes}\n`;
           }
@@ -220,6 +220,7 @@ export default function Chat({
 
   // Parse AI response for issue creation markers
   const parseIssueFromResponse = (response) => {
+    if (!response) return null;
     const issueMatch = response.match(/\[ISSUE_CREATED\](.*?)\[\/ISSUE_CREATED\]/s);
     if (issueMatch) {
       const parts = issueMatch[1].split('|').map(p => p.trim());
@@ -237,12 +238,14 @@ export default function Chat({
 
   // Create issue from parsed data
   const createIssue = (issueData) => {
+    if (!issueData || !setIssues) return;
+    
     // Find matching department
     let matchedDept = deptId;
-    if (issueData.department && departments) {
+    if (issueData.department && departments && departments.length > 0) {
       const found = departments.find(d => 
-        d.name.toLowerCase().includes(issueData.department.toLowerCase()) ||
-        issueData.department.toLowerCase().includes(d.name.toLowerCase())
+        d.name?.toLowerCase().includes(issueData.department.toLowerCase()) ||
+        issueData.department.toLowerCase().includes(d.name?.toLowerCase() || '')
       );
       if (found) matchedDept = found.id;
     }
@@ -259,20 +262,25 @@ export default function Chat({
       archived: false,
     };
 
-    setIssues(prev => [...prev, newIssue]);
-    logActivity(`Created issue via chat: ${newIssue.title}`, 'issue', deptName);
+    setIssues(prev => [...(prev || []), newIssue]);
+    
+    if (logActivity) {
+      logActivity(`Created issue via chat: ${newIssue.title}`, 'issue', deptName);
+    }
     
     // Add to intelligence
-    addToIntelligence({
-      sourceType: 'issue_created',
-      sourceId: newIssue.id,
-      title: newIssue.title,
-      content: newIssue.description || newIssue.title,
-      department: matchedDept,
-      tags: ['issue', 'open', newIssue.priority.toLowerCase()],
-      metadata: { priority: newIssue.priority },
-      relevanceBoost: newIssue.priority === 'High' ? 3 : newIssue.priority === 'Medium' ? 2 : 1,
-    });
+    if (addToIntelligence) {
+      addToIntelligence({
+        sourceType: 'issue_created',
+        sourceId: newIssue.id,
+        title: newIssue.title,
+        content: newIssue.description || newIssue.title,
+        department: matchedDept,
+        tags: ['issue', 'open', newIssue.priority.toLowerCase()],
+        metadata: { priority: newIssue.priority },
+        relevanceBoost: newIssue.priority === 'High' ? 3 : newIssue.priority === 'Medium' ? 2 : 1,
+      });
+    }
 
     setNotification(`Issue created: ${newIssue.title}`);
     setTimeout(() => setNotification(''), 3000);
@@ -280,12 +288,13 @@ export default function Chat({
 
   // Clean response for display (remove markers)
   const cleanResponseForDisplay = (response) => {
+    if (!response) return '';
     return response.replace(/\[ISSUE_CREATED\].*?\[\/ISSUE_CREATED\]/gs, '').trim();
   };
 
   // Direct send function (used by sessionStorage auto-send and button click)
   const sendMessageDirect = async (messageText) => {
-    if (!messageText.trim() || isThinking) return;
+    if (!messageText?.trim() || isThinking) return;
     
     const userMessage = {
       role: 'user',
@@ -294,10 +303,12 @@ export default function Chat({
     };
     
     // Add user message to conversation
-    setConversations(prev => ({
-      ...prev,
-      [deptId]: [...(prev[deptId] || []), userMessage]
-    }));
+    if (setConversations) {
+      setConversations(prev => ({
+        ...(prev || {}),
+        [deptId]: [...((prev || {})[deptId] || []), userMessage]
+      }));
+    }
     
     setInput('');
     setIsThinking(true);
@@ -308,7 +319,13 @@ export default function Chat({
       setRagInfo({ active: context.length > 0, cached: usedCache, topScore });
       
       // Track search
-      if (trackSearch) trackSearch(usedCache);
+      if (trackSearch) {
+        try {
+          trackSearch(usedCache);
+        } catch (e) {
+          console.log('Track search failed:', e);
+        }
+      }
       
       // Build system prompt
       const deptInstructions = activeDepartment?.instructions || '';
@@ -330,7 +347,7 @@ ISSUE CREATION: If the user asks you to create, log, add, or report an issue, in
 Keep responses helpful, specific to Empire Remodeling's context, and reference the knowledge provided when relevant.`;
 
       // Get conversation history for API
-      const historyForApi = messages.slice(-10).map(m => ({
+      const historyForApi = (messages || []).slice(-10).map(m => ({
         role: m.role,
         content: m.content
       }));
@@ -351,6 +368,10 @@ Keep responses helpful, specific to Empire Remodeling's context, and reference t
 
       const data = await response.json();
       
+      if (!data || !data.response) {
+        throw new Error('Empty response from API');
+      }
+      
       // Check for issue creation
       const issueData = parseIssueFromResponse(data.response);
       if (issueData) {
@@ -366,39 +387,61 @@ Keep responses helpful, specific to Empire Remodeling's context, and reference t
         timestamp: new Date().toISOString(),
       };
       
-      setConversations(prev => {
-        const updated = {
-          ...prev,
-          [deptId]: [...(prev[deptId] || []), aiMessage]
-        };
-        // Trim to max messages
-        updated[deptId] = trimConversationHistory(
-          { [deptId]: updated[deptId] },
-          CONVERSATION_MEMORY_CONFIG.MAX_MESSAGES_PER_DEPT
-        )[deptId];
-        return updated;
-      });
+      if (setConversations) {
+        setConversations(prev => {
+          const currentConvos = prev || {};
+          const updated = {
+            ...currentConvos,
+            [deptId]: [...(currentConvos[deptId] || []), aiMessage]
+          };
+          // Trim to max messages
+          if (CONVERSATION_MEMORY_CONFIG?.MAX_MESSAGES_PER_DEPT) {
+            updated[deptId] = trimConversationHistory(
+              { [deptId]: updated[deptId] },
+              CONVERSATION_MEMORY_CONFIG.MAX_MESSAGES_PER_DEPT
+            )[deptId];
+          }
+          return updated;
+        });
+      }
       
       // Track analytics
-      if (trackChatMessage) trackChatMessage(deptId);
+      if (trackChatMessage) {
+        try {
+          trackChatMessage(deptId);
+        } catch (e) {
+          console.log('Track chat message failed:', e);
+        }
+      }
       
       // Record knowledge gap if low relevance
-      if (topScore < KNOWLEDGE_GAPS_CONFIG.LOW_RELEVANCE_THRESHOLD && 
-          messageText.length >= KNOWLEDGE_GAPS_CONFIG.MIN_QUERY_LENGTH) {
+      if (KNOWLEDGE_GAPS_CONFIG && 
+          topScore < (KNOWLEDGE_GAPS_CONFIG.LOW_RELEVANCE_THRESHOLD || 20) && 
+          messageText.length >= (KNOWLEDGE_GAPS_CONFIG.MIN_QUERY_LENGTH || 10)) {
         if (recordKnowledgeGap) {
-          recordKnowledgeGap(messageText, deptId, topScore);
+          try {
+            recordKnowledgeGap(messageText, deptId, topScore);
+          } catch (e) {
+            console.log('Record knowledge gap failed:', e);
+          }
         }
       }
       
       // Log to intelligence
-      addToIntelligence({
-        sourceType: 'chat_query',
-        sourceId: generateId('chat'),
-        title: messageText.substring(0, 50),
-        content: `Q: ${messageText}\nA: ${cleanedResponse.substring(0, 500)}`,
-        department: deptId,
-        relevanceBoost: 1,
-      });
+      if (addToIntelligence) {
+        try {
+          addToIntelligence({
+            sourceType: 'chat_query',
+            sourceId: generateId('chat'),
+            title: messageText.substring(0, 50),
+            content: `Q: ${messageText}\nA: ${cleanedResponse.substring(0, 500)}`,
+            department: deptId,
+            relevanceBoost: 1,
+          });
+        } catch (e) {
+          console.log('Add to intelligence failed:', e);
+        }
+      }
       
     } catch (error) {
       console.error('Chat error:', error);
@@ -410,10 +453,12 @@ Keep responses helpful, specific to Empire Remodeling's context, and reference t
         timestamp: new Date().toISOString(),
       };
       
-      setConversations(prev => ({
-        ...prev,
-        [deptId]: [...(prev[deptId] || []), errorMessage]
-      }));
+      if (setConversations) {
+        setConversations(prev => ({
+          ...(prev || {}),
+          [deptId]: [...((prev || {})[deptId] || []), errorMessage]
+        }));
+      }
     } finally {
       setIsThinking(false);
     }
@@ -435,7 +480,7 @@ Keep responses helpful, specific to Empire Remodeling's context, and reference t
 
   // Start new chat (save current and clear)
   const startNewChat = () => {
-    if (messages.length === 0) return;
+    if (!messages || messages.length === 0) return;
     
     // Generate summary from first user message
     const firstUserMsg = messages.find(m => m.role === 'user');
@@ -444,7 +489,7 @@ Keep responses helpful, specific to Empire Remodeling's context, and reference t
       : 'Chat conversation';
     
     // Extract tags from conversation
-    const conversationText = messages.map(m => m.content).join(' ').toLowerCase();
+    const conversationText = messages.map(m => m.content || '').join(' ').toLowerCase();
     const tagKeywords = ['budget', 'schedule', 'permit', 'client', 'material', 'subcontractor', 
                          'safety', 'delay', 'issue', 'payment', 'inspection', 'change order', 
                          'warranty', 'estimate'];
@@ -468,36 +513,47 @@ Keep responses helpful, specific to Empire Remodeling's context, and reference t
     };
     
     // Add to logs (limit per department)
-    setChatLogs(prev => {
-      const otherDeptLogs = prev.filter(l => l.departmentId !== deptId);
-      const thisDeptLogs = prev.filter(l => l.departmentId === deptId);
-      const updatedThisDept = [newLog, ...thisDeptLogs].slice(0, CHAT_LOGS_CONFIG.MAX_LOGS_PER_DEPT);
-      return [...updatedThisDept, ...otherDeptLogs].slice(0, CHAT_LOGS_CONFIG.MAX_LOGS);
-    });
+    if (setChatLogs && CHAT_LOGS_CONFIG) {
+      setChatLogs(prev => {
+        const currentLogs = prev || [];
+        const otherDeptLogs = currentLogs.filter(l => l.departmentId !== deptId);
+        const thisDeptLogs = currentLogs.filter(l => l.departmentId === deptId);
+        const updatedThisDept = [newLog, ...thisDeptLogs].slice(0, CHAT_LOGS_CONFIG.MAX_LOGS_PER_DEPT || 10);
+        return [...updatedThisDept, ...otherDeptLogs].slice(0, CHAT_LOGS_CONFIG.MAX_LOGS || 50);
+      });
+    }
     
     // Clear current conversation
-    setConversations(prev => ({
-      ...prev,
-      [deptId]: []
-    }));
+    if (setConversations) {
+      setConversations(prev => ({
+        ...(prev || {}),
+        [deptId]: []
+      }));
+    }
     
-    logActivity(`Saved chat in ${deptName} (${messages.length} messages)`, 'chat', deptName);
+    if (logActivity) {
+      logActivity(`Saved chat in ${deptName} (${messages.length} messages)`, 'chat', deptName);
+    }
     setNotification('Chat saved to history');
     setTimeout(() => setNotification(''), 2000);
   };
 
   // Delete chat log
   const deleteChatLog = (logId) => {
-    setChatLogs(prev => prev.filter(l => l.id !== logId));
+    if (setChatLogs) {
+      setChatLogs(prev => (prev || []).filter(l => l.id !== logId));
+    }
   };
 
   // Clear current conversation
   const clearConversation = () => {
     if (confirm('Clear this conversation? (It will not be saved to history)')) {
-      setConversations(prev => ({
-        ...prev,
-        [deptId]: []
-      }));
+      if (setConversations) {
+        setConversations(prev => ({
+          ...(prev || {}),
+          [deptId]: []
+        }));
+      }
     }
   };
 
@@ -599,7 +655,7 @@ Keep responses helpful, specific to Empire Remodeling's context, and reference t
               gap: 4,
             }}>
               <Clock size={12} />
-              {messages.length} / {CONVERSATION_MEMORY_CONFIG.MAX_MESSAGES_PER_DEPT}
+              {messages.length} / {CONVERSATION_MEMORY_CONFIG?.MAX_MESSAGES_PER_DEPT || 20}
             </div>
           )}
           
@@ -885,7 +941,7 @@ Keep responses helpful, specific to Empire Remodeling's context, and reference t
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                         <User size={12} color="#60A5FA" />
                         <span style={{ fontSize: 12, color: '#60A5FA', fontWeight: 500 }}>
-                          {log.savedBy}
+                          {log.savedBy || 'You'}
                         </span>
                         <span style={{ fontSize: 11, color: '#64748B' }}>•</span>
                         <span style={{
@@ -895,13 +951,13 @@ Keep responses helpful, specific to Empire Remodeling's context, and reference t
                           borderRadius: 4,
                           color: '#A78BFA',
                         }}>
-                          {log.departmentName?.split(' ')[0] || 'General'}
+                          {(log.departmentName || 'General').split(' ')[0]}
                         </span>
                       </div>
                       <div style={{ fontSize: 13, color: '#E2E8F0', marginBottom: 6 }}>
-                        {log.summary}
+                        {log.summary || 'Chat conversation'}
                       </div>
-                      {log.tags?.length > 0 && (
+                      {log.tags && log.tags.length > 0 && (
                         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                           {log.tags.map(tag => (
                             <span key={tag} style={{
@@ -942,13 +998,13 @@ Keep responses helpful, specific to Empire Remodeling's context, and reference t
                   </div>
                   
                   {/* Expanded view */}
-                  {expandedLog === log.id && (
+                  {expandedLog === log.id && log.messages && (
                     <div style={{
                       marginTop: 12,
                       paddingTop: 12,
                       borderTop: '1px solid rgba(255,255,255,0.05)',
                     }}>
-                      {log.messages?.map((msg, i) => (
+                      {log.messages.map((msg, i) => (
                         <div key={i} style={{
                           padding: '8px 12px',
                           marginBottom: 8,
@@ -970,7 +1026,7 @@ Keep responses helpful, specific to Empire Remodeling's context, and reference t
                             color: '#E2E8F0',
                             lineHeight: 1.5,
                           }}>
-                            {msg.content.length > 300 
+                            {(msg.content || '').length > 300 
                               ? msg.content.substring(0, 300) + '...' 
                               : msg.content}
                           </div>
