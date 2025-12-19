@@ -1,11 +1,11 @@
 // Empire AI - Chat Interface
-// Version 3.6 - Maximum Error Protection
+// Version 3.7 - Fixed Knowledge Retrieval
 
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   Send, Loader2, Sparkles, Building, Globe, Trash2, 
   MessageSquare, Clock, FileText, Database, Plus,
-  ChevronDown, ChevronUp, User, Calendar
+  ChevronDown, ChevronUp, User, Calendar, AlertCircle
 } from 'lucide-react';
 
 // Safe utility imports with fallbacks
@@ -91,6 +91,24 @@ const CONV_CONFIG = CONVERSATION_MEMORY_CONFIG || { MAX_MESSAGES_PER_DEPT: 20 };
 const GAPS_CONFIG = KNOWLEDGE_GAPS_CONFIG || { LOW_RELEVANCE_THRESHOLD: 20, MIN_QUERY_LENGTH: 10 };
 const LOGS_CONFIG = CHAT_LOGS_CONFIG || { MAX_LOGS_PER_DEPT: 10, MAX_LOGS: 50 };
 
+// Helper to check if item belongs to department (matches by ID or name)
+const matchesDepartment = (item, deptId, deptName) => {
+  if (!item) return false;
+  const itemDept = (item.department || '').toLowerCase();
+  const checkId = (deptId || '').toLowerCase();
+  const checkName = (deptName || '').toLowerCase();
+  
+  // Match by exact ID
+  if (itemDept === checkId) return true;
+  // Match by name
+  if (itemDept === checkName) return true;
+  // Match if item dept contains the name (e.g., "production" matches "Production & Project Management")
+  if (checkName && itemDept.includes(checkName.split(' ')[0].toLowerCase())) return true;
+  if (checkName && checkName.includes(itemDept)) return true;
+  
+  return false;
+};
+
 export default function Chat(props) {
   // Destructure with defaults
   const {
@@ -117,11 +135,12 @@ export default function Chat(props) {
   const [input, setInput] = useState('');
   const [isThinking, setIsThinking] = useState(false);
   const [searchAllDepts, setSearchAllDepts] = useState(false);
-  const [ragInfo, setRagInfo] = useState({ active: false, cached: false, topScore: 0 });
+  const [ragInfo, setRagInfo] = useState({ active: false, cached: false, topScore: 0, sources: [] });
   const [notification, setNotification] = useState('');
   const [showChatLogs, setShowChatLogs] = useState(false);
   const [expandedLog, setExpandedLog] = useState(null);
   const [debugError, setDebugError] = useState('');
+  const [showDebug, setShowDebug] = useState(false);
   
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
@@ -140,6 +159,16 @@ export default function Chat(props) {
   const safeIssues = Array.isArray(issues) ? issues : [];
   const safeIndex = Array.isArray(intelligenceIndex) ? intelligenceIndex : [];
   const safeDepts = Array.isArray(departments) ? departments : [];
+
+  // Debug info for knowledge sources
+  const knowledgeDebug = {
+    totalKnowledge: safeKnowledge.length,
+    totalDocs: safeDocs.length,
+    totalIntelligence: safeIndex.length,
+    totalIssues: safeIssues.length,
+    deptKnowledge: safeKnowledge.filter(k => matchesDepartment(k, deptId, deptName)).length,
+    deptDocs: safeDocs.filter(d => d && d.status === 'synced' && matchesDepartment(d, deptId, deptName)).length,
+  };
 
   // Scroll on new messages
   useEffect(() => {
@@ -173,13 +202,19 @@ export default function Chat(props) {
     }
   } catch(e) {}
 
-  // Build context
+  // Build context - FIXED VERSION
   const buildContext = async (query) => {
     let context = '';
     let topScore = 0;
     let cached = false;
+    let sources = [];
     
-    // Intelligence search
+    console.log('Building context for:', deptId, deptName);
+    console.log('Available knowledge:', safeKnowledge.length);
+    console.log('Available docs:', safeDocs.length);
+    console.log('Available intelligence:', safeIndex.length);
+    
+    // 1. Intelligence search (semantic + keyword)
     if (safeIndex.length > 0 && typeof queryIntelligence === 'function') {
       try {
         let emb = safeGetCached(query);
@@ -197,64 +232,119 @@ export default function Chat(props) {
               emb = data.embedding;
               safeSetCached(query, emb);
             }
-          } catch(e) {}
+          } catch(e) { console.log('Embedding error:', e); }
         }
         
         const results = queryIntelligence(query, searchAllDepts ? null : deptId, emb);
         if (Array.isArray(results) && results.length > 0) {
           topScore = results[0]?.score || 0;
-          context += '\n=== COMPANY KNOWLEDGE ===\n';
+          context += '\n=== CENTRAL INTELLIGENCE ===\n';
           results.slice(0, 8).forEach((item, i) => {
             if (item) {
-              context += `${i+1}. ${item.title || 'Item'}: ${(item.content || '').substring(0, 250)}...\n`;
+              context += `${i+1}. [${item.sourceType || 'item'}] ${item.title || 'Item'}: ${(item.content || '').substring(0, 300)}...\n`;
+              sources.push({ type: 'intelligence', name: item.title, score: item.score });
             }
           });
+          console.log('Intelligence results:', results.length);
         }
       } catch(e) {
         console.log('Query intelligence error:', e);
       }
     }
     
-    // Connected docs
+    // 2. Connected docs - NOW FILTERED BY DEPARTMENT
     if (safeDocs.length > 0) {
       try {
-        const synced = safeDocs.filter(d => d && d.status === 'synced' && d.content);
-        if (synced.length > 0) {
-          context += '\n=== CONNECTED DOCS ===\n';
-          synced.forEach(d => {
-            context += `[${d.name || 'Doc'}]: ${(d.content || '').substring(0, 10000)}\n`;
+        let docsToInclude;
+        if (searchAllDepts) {
+          // Include all synced docs
+          docsToInclude = safeDocs.filter(d => d && d.status === 'synced' && d.content);
+        } else {
+          // Filter by department - match by ID or name
+          docsToInclude = safeDocs.filter(d => 
+            d && d.status === 'synced' && d.content && matchesDepartment(d, deptId, deptName)
+          );
+          
+          // Also include docs marked as "company-wide" or with no department
+          const companyWideDocs = safeDocs.filter(d => 
+            d && d.status === 'synced' && d.content && 
+            (!d.department || d.department === 'company-wide' || d.department === 'all')
+          );
+          docsToInclude = [...new Set([...docsToInclude, ...companyWideDocs])];
+        }
+        
+        console.log('Docs to include:', docsToInclude.length, docsToInclude.map(d => d.name));
+        
+        if (docsToInclude.length > 0) {
+          context += '\n=== CONNECTED DOCUMENTS ===\n';
+          docsToInclude.forEach(d => {
+            const content = (d.content || '').substring(0, 15000); // Increased limit
+            context += `\n[${d.name || 'Document'}] (${d.department || 'general'}):\n${content}\n`;
+            sources.push({ type: 'doc', name: d.name });
           });
         }
-      } catch(e) {}
+      } catch(e) { console.log('Connected docs error:', e); }
     }
     
-    // Knowledge base
+    // 3. Knowledge base - IMPROVED MATCHING
     if (safeKnowledge.length > 0) {
       try {
-        const filtered = searchAllDepts ? safeKnowledge : safeKnowledge.filter(k => k && k.department === deptId);
+        let filtered;
+        if (searchAllDepts) {
+          filtered = safeKnowledge;
+        } else {
+          // Match by department ID or name
+          filtered = safeKnowledge.filter(k => matchesDepartment(k, deptId, deptName));
+          
+          // Also include company-wide knowledge
+          const companyWide = safeKnowledge.filter(k => 
+            k && (!k.department || k.department === 'company-wide' || k.department === 'all')
+          );
+          filtered = [...new Set([...filtered, ...companyWide])];
+        }
+        
+        console.log('Knowledge to include:', filtered.length);
+        
         if (filtered.length > 0) {
           context += '\n=== KNOWLEDGE BASE ===\n';
-          filtered.slice(0, 5).forEach(k => {
-            if (k) context += `- ${k.title || 'Item'}: ${(k.content || '').substring(0, 300)}\n`;
+          filtered.slice(0, 10).forEach(k => {
+            if (k) {
+              context += `- [${k.type || 'item'}] ${k.title || 'Item'}: ${(k.content || '').substring(0, 500)}\n`;
+              sources.push({ type: 'knowledge', name: k.title });
+            }
           });
         }
-      } catch(e) {}
+      } catch(e) { console.log('Knowledge error:', e); }
     }
     
-    // Issues
+    // 4. Active issues
     if (safeIssues.length > 0) {
       try {
-        const active = safeIssues.filter(i => i && !i.archived);
-        if (active.length > 0) {
-          context += '\n=== ACTIVE ISSUES ===\n';
-          active.slice(0, 10).forEach((iss, i) => {
-            context += `${i+1}. [${iss.status || 'Open'}] ${iss.title || 'Issue'}\n`;
-          });
+        let activeIssues;
+        if (searchAllDepts) {
+          activeIssues = safeIssues.filter(i => i && !i.archived);
+        } else {
+          activeIssues = safeIssues.filter(i => 
+            i && !i.archived && matchesDepartment(i, deptId, deptName)
+          );
         }
-      } catch(e) {}
+        
+        if (activeIssues.length > 0) {
+          context += '\n=== ACTIVE ISSUES ===\n';
+          activeIssues.slice(0, 10).forEach((iss, i) => {
+            context += `${i+1}. [${iss.status || 'Open'}] [${iss.priority || 'Medium'}] ${iss.title || 'Issue'}`;
+            if (iss.description) context += ` - ${iss.description.substring(0, 100)}`;
+            context += '\n';
+          });
+          sources.push({ type: 'issues', name: `${activeIssues.length} issues` });
+        }
+      } catch(e) { console.log('Issues error:', e); }
     }
     
-    return { context, topScore, cached };
+    console.log('Total context length:', context.length);
+    console.log('Sources found:', sources);
+    
+    return { context, topScore, cached, sources };
   };
 
   // Parse issue from response
@@ -342,15 +432,19 @@ export default function Chat(props) {
     
     try {
       // Build context
-      let context = '', topScore = 0, cached = false;
+      let context = '', topScore = 0, cached = false, sources = [];
       try {
         const ctx = await buildContext(text);
         context = ctx.context || '';
         topScore = ctx.topScore || 0;
         cached = ctx.cached || false;
-      } catch(e) { console.log('Build context error:', e); }
+        sources = ctx.sources || [];
+      } catch(e) { 
+        console.log('Build context error:', e); 
+        setDebugError('Context build failed: ' + e.message);
+      }
       
-      setRagInfo({ active: context.length > 0, cached, topScore });
+      setRagInfo({ active: context.length > 0, cached, topScore, sources });
       
       if (typeof trackSearch === 'function') {
         try { trackSearch(cached); } catch(e) {}
@@ -363,15 +457,19 @@ export default function Chat(props) {
       const sysPrompt = `You are Empire AI, the operational intelligence assistant for Empire Remodeling.
 
 Current Department: ${deptName}
-${activeDepartment?.description ? `Focus: ${activeDepartment.description}` : ''}
-${summary ? `\nRecent context: ${summary}` : ''}
-${context}
+${activeDepartment?.description ? `Department Focus: ${activeDepartment.description}` : ''}
+${summary ? `\nRecent conversation context: ${summary}` : ''}
+
+${context ? `\n--- AVAILABLE KNOWLEDGE ---\n${context}\n--- END KNOWLEDGE ---` : '\n[No specific knowledge available for this query]'}
+
 ${systemInstructions ? `\n=== SYSTEM INSTRUCTIONS ===\n${systemInstructions}` : ''}
-${deptInstr ? `\n=== ${deptName.toUpperCase()} INSTRUCTIONS ===\n${deptInstr}` : ''}
+${deptInstr ? `\n=== ${deptName.toUpperCase()} SPECIFIC INSTRUCTIONS ===\n${deptInstr}` : ''}
+
+IMPORTANT: When answering questions, USE the knowledge provided above. Reference specific documents, issues, or data when relevant. If you have relevant knowledge above, cite it in your response.
 
 If user asks to create an issue, include: [ISSUE_CREATED] Title | Priority | Dept | Description [/ISSUE_CREATED]
 
-Be helpful and reference company knowledge when relevant.`;
+Be helpful, specific, and reference the company's actual data when available.`;
 
       // Get history
       let history = [];
@@ -512,6 +610,26 @@ Be helpful and reference company knowledge when relevant.`;
         </div>
         
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          {/* Knowledge indicator */}
+          <button 
+            onClick={() => setShowDebug(!showDebug)}
+            style={{ 
+              padding: '4px 10px', 
+              background: knowledgeDebug.deptKnowledge > 0 || knowledgeDebug.deptDocs > 0 ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)', 
+              borderRadius: 12, 
+              fontSize: 11, 
+              color: knowledgeDebug.deptKnowledge > 0 || knowledgeDebug.deptDocs > 0 ? '#10B981' : '#EF4444',
+              border: 'none',
+              cursor: 'pointer',
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: 4 
+            }}
+          >
+            <FileText size={12} /> 
+            {knowledgeDebug.deptKnowledge + knowledgeDebug.deptDocs} sources
+          </button>
+          
           {ragInfo.active && (
             <div style={{ padding: '4px 10px', background: ragInfo.cached ? 'rgba(139,92,246,0.2)' : 'rgba(59,130,246,0.2)', borderRadius: 12, fontSize: 11, color: ragInfo.cached ? '#A78BFA' : '#60A5FA', display: 'flex', alignItems: 'center', gap: 4 }}>
               <Database size={12} /> RAG {ragInfo.cached ? '(Cached)' : ''}
@@ -522,15 +640,16 @@ Be helpful and reference company knowledge when relevant.`;
             padding: '6px 12px', background: searchAllDepts ? 'rgba(59,130,246,0.2)' : 'rgba(255,255,255,0.05)',
             border: `1px solid ${searchAllDepts ? 'rgba(59,130,246,0.3)' : 'rgba(255,255,255,0.1)'}`,
             borderRadius: 8, color: searchAllDepts ? '#60A5FA' : '#94A3B8', fontSize: 12, cursor: 'pointer',
+            display: 'flex', alignItems: 'center',
           }}>
             {searchAllDepts ? <Globe size={14} style={{marginRight:4}}/> : <Building size={14} style={{marginRight:4}}/>}
-            {searchAllDepts ? 'All' : 'Dept'}
+            {searchAllDepts ? 'All Depts' : 'This Dept'}
           </button>
           
           {messages.length > 0 && (
             <>
               <span style={{ fontSize: 11, color: '#64748B' }}>{messages.length}/{CONV_CONFIG.MAX_MESSAGES_PER_DEPT}</span>
-              <button onClick={startNew} style={{ padding: '6px 12px', background: 'rgba(59,130,246,0.2)', border: '1px solid rgba(59,130,246,0.3)', borderRadius: 8, color: '#60A5FA', fontSize: 12, cursor: 'pointer' }}>
+              <button onClick={startNew} style={{ padding: '6px 12px', background: 'rgba(59,130,246,0.2)', border: '1px solid rgba(59,130,246,0.3)', borderRadius: 8, color: '#60A5FA', fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
                 <Plus size={14} style={{marginRight:4}}/> New
               </button>
               <button onClick={clearChat} style={{ padding: '6px 12px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 8, color: '#EF4444', fontSize: 12, cursor: 'pointer' }}>
@@ -540,6 +659,44 @@ Be helpful and reference company knowledge when relevant.`;
           )}
         </div>
       </div>
+      
+      {/* Debug Panel */}
+      {showDebug && (
+        <div style={{ padding: '12px 24px', background: 'rgba(15,23,42,0.8)', borderBottom: '1px solid rgba(255,255,255,0.06)', fontSize: 12 }}>
+          <div style={{ color: '#94A3B8', marginBottom: 8 }}>Knowledge Debug ({deptName}):</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 8 }}>
+            <div style={{ padding: 8, background: 'rgba(255,255,255,0.05)', borderRadius: 6 }}>
+              <div style={{ color: '#64748B' }}>Dept Knowledge</div>
+              <div style={{ color: '#E2E8F0', fontWeight: 600 }}>{knowledgeDebug.deptKnowledge}</div>
+            </div>
+            <div style={{ padding: 8, background: 'rgba(255,255,255,0.05)', borderRadius: 6 }}>
+              <div style={{ color: '#64748B' }}>Dept Docs</div>
+              <div style={{ color: '#E2E8F0', fontWeight: 600 }}>{knowledgeDebug.deptDocs}</div>
+            </div>
+            <div style={{ padding: 8, background: 'rgba(255,255,255,0.05)', borderRadius: 6 }}>
+              <div style={{ color: '#64748B' }}>Total Knowledge</div>
+              <div style={{ color: '#E2E8F0', fontWeight: 600 }}>{knowledgeDebug.totalKnowledge}</div>
+            </div>
+            <div style={{ padding: 8, background: 'rgba(255,255,255,0.05)', borderRadius: 6 }}>
+              <div style={{ color: '#64748B' }}>Total Docs</div>
+              <div style={{ color: '#E2E8F0', fontWeight: 600 }}>{knowledgeDebug.totalDocs}</div>
+            </div>
+            <div style={{ padding: 8, background: 'rgba(255,255,255,0.05)', borderRadius: 6 }}>
+              <div style={{ color: '#64748B' }}>Intelligence</div>
+              <div style={{ color: '#E2E8F0', fontWeight: 600 }}>{knowledgeDebug.totalIntelligence}</div>
+            </div>
+            <div style={{ padding: 8, background: 'rgba(255,255,255,0.05)', borderRadius: 6 }}>
+              <div style={{ color: '#64748B' }}>Issues</div>
+              <div style={{ color: '#E2E8F0', fontWeight: 600 }}>{knowledgeDebug.totalIssues}</div>
+            </div>
+          </div>
+          {ragInfo.sources && ragInfo.sources.length > 0 && (
+            <div style={{ marginTop: 8, color: '#64748B' }}>
+              Last query sources: {ragInfo.sources.map(s => s.name).join(', ')}
+            </div>
+          )}
+        </div>
+      )}
       
       {/* Messages */}
       <div style={{ flex: 1, overflowY: 'auto', padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -555,6 +712,12 @@ Be helpful and reference company knowledge when relevant.`;
               <Sparkles size={40} color="#3B82F6" />
             </div>
             <div style={{ fontSize: 18, fontWeight: 600, color: '#E2E8F0' }}>Start a conversation</div>
+            <div style={{ fontSize: 13, maxWidth: 400 }}>
+              {knowledgeDebug.deptKnowledge + knowledgeDebug.deptDocs > 0 
+                ? `${knowledgeDebug.deptKnowledge + knowledgeDebug.deptDocs} knowledge sources available for ${deptName}`
+                : `Add documents or knowledge to ${deptName} to enhance responses`
+              }
+            </div>
           </div>
         )}
         
@@ -588,8 +751,8 @@ Be helpful and reference company knowledge when relevant.`;
       {/* Input */}
       <form onSubmit={onSubmit} style={{ padding: '16px 24px', borderTop: '1px solid rgba(255,255,255,0.06)', background: 'rgba(30,41,59,0.5)' }}>
         {debugError && (
-          <div style={{ marginBottom: 8, padding: 8, background: 'rgba(239,68,68,0.1)', borderRadius: 8, fontSize: 12, color: '#EF4444' }}>
-            Debug: {debugError}
+          <div style={{ marginBottom: 8, padding: 8, background: 'rgba(239,68,68,0.1)', borderRadius: 8, fontSize: 12, color: '#EF4444', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <AlertCircle size={14} /> Debug: {debugError}
           </div>
         )}
         <div style={{ display: 'flex', gap: 12 }}>
@@ -655,7 +818,7 @@ Be helpful and reference company knowledge when relevant.`;
       )}
       
       {notification && (
-        <div style={{ position: 'fixed', bottom: 100, left: '50%', transform: 'translateX(-50%)', background: 'linear-gradient(135deg,#10B981,#059669)', color: 'white', padding: '12px 24px', borderRadius: 12, fontSize: 14, fontWeight: 500, zIndex: 1000 }}>
+        <div style={{ position: 'fixed', bottom: 100, left: '50%', transform: 'translateX(-50%)', background: 'linear-gradient(135deg,#10B981,#059669)', color: 'white', padding: '12px 24px', borderRadius: 12, fontSize: 14, fontWeight: 500, zIndex: 1000, display: 'flex', alignItems: 'center' }}>
           <Sparkles size={16} style={{marginRight:8}}/>{notification}
         </div>
       )}
