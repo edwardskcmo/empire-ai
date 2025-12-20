@@ -17,6 +17,9 @@ const ICON_MAP = {
   Settings, LayoutDashboard, HelpCircle, MessageSquare
 };
 
+// Content storage limit for knowledge items (increased from 500)
+const KNOWLEDGE_CONTENT_LIMIT = 15000;
+
 // Helper to render department icon (handles both emoji and Lucide icon names)
 const renderDeptIcon = (icon, size = 24, color = 'white') => {
   if (!icon) return <Folder size={size} color={color} />;
@@ -53,6 +56,7 @@ export default function Knowledge({
   const [editingDept, setEditingDept] = useState(null);
   const [menuOpen, setMenuOpen] = useState(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState(null); // NEW: Upload feedback
 
   const [newDept, setNewDept] = useState({ name: '', description: '', icon: '📁', color: '#3B82F6', instructions: '' });
   const [newInsight, setNewInsight] = useState({ title: '', content: '', department: '' });
@@ -154,39 +158,111 @@ export default function Knowledge({
     setShowInsightModal(false);
   };
 
-  // Handle file upload
-  const handleFileUpload = (e, deptId) => {
+  // UPDATED: Handle file upload - now reads actual file content
+  const handleFileUpload = async (e, deptId) => {
     const files = Array.from(e.target.files);
+    if (files.length === 0) return;
     
-    files.forEach(file => {
-      const doc = {
-        id: `knowledge_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        title: file.name,
-        content: `Uploaded file: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`,
-        department: deptId,
-        type: 'document',
-        fileType: file.type,
-        fileSize: file.size,
-        createdAt: new Date().toISOString()
-      };
-      
-      setKnowledge(prev => [doc, ...prev]);
-      logActivity(`Uploaded: ${file.name}`, 'upload');
-      
-      if (addToIntelligence) {
-        addToIntelligence({
-          sourceType: 'document_upload',
-          sourceId: doc.id,
+    setUploadStatus({ type: 'loading', message: `Processing ${files.length} file(s)...` });
+    
+    for (const file of files) {
+      try {
+        let content = '';
+        const fileType = file.type;
+        const fileName = file.name.toLowerCase();
+        
+        // Check if file is readable as text
+        const isTextFile = 
+          fileType.startsWith('text/') ||
+          fileType === 'application/json' ||
+          fileType === 'application/xml' ||
+          fileType === 'application/csv' ||
+          fileName.endsWith('.txt') ||
+          fileName.endsWith('.csv') ||
+          fileName.endsWith('.json') ||
+          fileName.endsWith('.md') ||
+          fileName.endsWith('.xml') ||
+          fileName.endsWith('.html') ||
+          fileName.endsWith('.htm') ||
+          fileName.endsWith('.log') ||
+          fileName.endsWith('.yaml') ||
+          fileName.endsWith('.yml');
+        
+        if (isTextFile) {
+          // Read text content
+          content = await readFileAsText(file);
+          
+          // Truncate if too long
+          if (content.length > KNOWLEDGE_CONTENT_LIMIT) {
+            content = content.substring(0, KNOWLEDGE_CONTENT_LIMIT) + '\n\n[Content truncated at 15,000 characters]';
+          }
+        } else if (fileType === 'application/pdf') {
+          // For PDFs, store a note - full PDF parsing would require a library
+          content = `[PDF Document: ${file.name}]\nSize: ${(file.size / 1024).toFixed(1)} KB\n\nNote: For full PDF content access, consider using a Google Doc or extracting text first.`;
+        } else {
+          // For other files (images, etc), store metadata
+          content = `[File: ${file.name}]\nType: ${fileType || 'unknown'}\nSize: ${(file.size / 1024).toFixed(1)} KB`;
+        }
+        
+        const doc = {
+          id: `knowledge_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           title: file.name,
-          content: `Document uploaded to ${departments.find(d => d.id === deptId)?.name || 'Unknown'}`,
+          content: content,
           department: deptId,
-          tags: ['document', 'upload', file.type.split('/')[1] || 'file'],
-          relevanceBoost: 1
+          type: 'document',
+          fileType: file.type,
+          fileSize: file.size,
+          createdAt: new Date().toISOString()
+        };
+        
+        setKnowledge(prev => [doc, ...prev]);
+        logActivity(`Uploaded: ${file.name}`, 'upload');
+        
+        if (addToIntelligence) {
+          addToIntelligence({
+            sourceType: 'document_upload',
+            sourceId: doc.id,
+            title: file.name,
+            content: content, // Full content for intelligence
+            department: deptId,
+            tags: ['document', 'upload', getFileExtension(file.name)],
+            relevanceBoost: 1
+          });
+        }
+        
+        setUploadStatus({ 
+          type: 'success', 
+          message: `Uploaded: ${file.name} (${content.length.toLocaleString()} chars)` 
+        });
+        
+      } catch (error) {
+        console.error('File upload error:', error);
+        setUploadStatus({ 
+          type: 'error', 
+          message: `Failed to upload ${file.name}: ${error.message}` 
         });
       }
-    });
+    }
     
+    // Clear status after 3 seconds
+    setTimeout(() => setUploadStatus(null), 3000);
     e.target.value = '';
+  };
+  
+  // Helper: Read file as text
+  const readFileAsText = (file) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => resolve(e.target.result);
+      reader.onerror = (e) => reject(new Error('Failed to read file'));
+      reader.readAsText(file);
+    });
+  };
+  
+  // Helper: Get file extension
+  const getFileExtension = (filename) => {
+    const parts = filename.split('.');
+    return parts.length > 1 ? parts[parts.length - 1].toLowerCase() : 'file';
   };
 
   // Delete knowledge item
@@ -197,7 +273,7 @@ export default function Knowledge({
     }
   };
 
-  // Connect Google Doc/Sheet
+  // Connect Google Doc/Sheet - UPDATED: Increased storage limit
   const handleConnectDoc = async () => {
     if (!newDoc.name.trim() || !newDoc.url.trim() || !newDoc.department) return;
     
@@ -224,11 +300,12 @@ export default function Knowledge({
     if (updated.status === 'synced') {
       logActivity(`Connected: ${doc.name}`, 'google_doc');
       
-      // Add to knowledge
+      // Add to knowledge - INCREASED from 500 to 15,000 chars
       const knowledgeItem = {
         id: `knowledge_${doc.id}`,
         title: doc.name,
-        content: updated.content?.substring(0, 500) + '...',
+        content: (updated.content || '').substring(0, KNOWLEDGE_CONTENT_LIMIT) + 
+                 (updated.content?.length > KNOWLEDGE_CONTENT_LIMIT ? '\n\n[Preview - full content available via Connected Docs]' : ''),
         department: doc.department,
         type: 'google_doc',
         linkedDocId: doc.id,
@@ -241,7 +318,7 @@ export default function Knowledge({
           sourceType: 'google_doc',
           sourceId: doc.id,
           title: doc.name,
-          content: updated.content,
+          content: updated.content, // Full content for intelligence
           department: doc.department,
           relevanceBoost: 2
         });
@@ -340,6 +417,7 @@ export default function Knowledge({
               <input
                 type="file"
                 multiple
+                accept=".txt,.csv,.json,.md,.xml,.html,.htm,.log,.yaml,.yml,.pdf"
                 onChange={(e) => handleFileUpload(e, selectedDept)}
                 style={{ display: 'none' }}
               />
@@ -368,6 +446,35 @@ export default function Knowledge({
           </div>
         </div>
 
+        {/* Upload Status */}
+        {uploadStatus && (
+          <div style={{
+            padding: '12px 16px',
+            marginBottom: '16px',
+            borderRadius: '8px',
+            background: uploadStatus.type === 'success' ? 'rgba(16, 185, 129, 0.1)' :
+                       uploadStatus.type === 'error' ? 'rgba(239, 68, 68, 0.1)' :
+                       'rgba(59, 130, 246, 0.1)',
+            border: `1px solid ${
+              uploadStatus.type === 'success' ? 'rgba(16, 185, 129, 0.3)' :
+              uploadStatus.type === 'error' ? 'rgba(239, 68, 68, 0.3)' :
+              'rgba(59, 130, 246, 0.3)'
+            }`,
+            color: uploadStatus.type === 'success' ? '#10B981' :
+                   uploadStatus.type === 'error' ? '#EF4444' :
+                   '#3B82F6',
+            fontSize: '14px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px'
+          }}>
+            {uploadStatus.type === 'loading' && <Loader size={16} style={{ animation: 'spin 1s linear infinite' }} />}
+            {uploadStatus.type === 'success' && <CheckCircle size={16} />}
+            {uploadStatus.type === 'error' && <AlertCircle size={16} />}
+            {uploadStatus.message}
+          </div>
+        )}
+
         {/* Knowledge items */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
           {deptKnowledge.length === 0 ? (
@@ -393,11 +500,12 @@ export default function Knowledge({
                 alignItems: 'center',
                 gap: '12px'
               }}>
-                <FileText size={20} style={{ color: item.type === 'insight' ? '#F59E0B' : '#3B82F6' }} />
+                <FileText size={20} style={{ color: item.type === 'insight' ? '#F59E0B' : item.type === 'google_doc' ? '#10B981' : '#3B82F6' }} />
                 <div style={{ flex: 1 }}>
                   <p style={{ color: '#E2E8F0', fontSize: '14px', fontWeight: '500', margin: 0 }}>{item.title}</p>
                   <p style={{ color: '#64748B', fontSize: '12px', margin: '4px 0 0 0' }}>
-                    {item.type === 'insight' ? 'Insight' : 'Document'} • {new Date(item.createdAt).toLocaleDateString()}
+                    {item.type === 'insight' ? 'Insight' : item.type === 'google_doc' ? 'Connected Doc' : 'Document'} • {new Date(item.createdAt).toLocaleDateString()}
+                    {item.content && <span> • {item.content.length.toLocaleString()} chars</span>}
                   </p>
                 </div>
                 <button
@@ -486,6 +594,16 @@ export default function Knowledge({
             <h3 style={{ color: '#E2E8F0', fontSize: '16px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px', margin: 0 }}>
               <Link size={18} style={{ color: '#10B981' }} />
               Connected Google Docs/Sheets
+              <span style={{ 
+                fontSize: '11px', 
+                background: 'rgba(16, 185, 129, 0.2)', 
+                color: '#10B981', 
+                padding: '2px 8px', 
+                borderRadius: '10px',
+                marginLeft: '8px'
+              }}>
+                Full data access
+              </span>
             </h3>
             <button
               onClick={handleRefreshAll}
@@ -525,7 +643,12 @@ export default function Knowledge({
                 <div style={{ flex: 1 }}>
                   <p style={{ color: '#E2E8F0', fontSize: '14px', margin: 0 }}>{doc.name}</p>
                   <p style={{ color: '#64748B', fontSize: '12px', margin: '2px 0 0 0' }}>
-                    {doc.status === 'synced' && `Synced ${doc.lastFetched ? new Date(doc.lastFetched).toLocaleTimeString() : ''}`}
+                    {doc.status === 'synced' && (
+                      <>
+                        Synced {doc.lastFetched ? new Date(doc.lastFetched).toLocaleTimeString() : ''}
+                        {doc.content && <span style={{ color: '#10B981' }}> • {doc.content.length.toLocaleString()} chars</span>}
+                      </>
+                    )}
                     {doc.status === 'error' && (doc.error || 'Failed to sync')}
                     {doc.status === 'syncing' && 'Syncing...'}
                   </p>
@@ -708,6 +831,7 @@ export default function Knowledge({
                   <input
                     type="file"
                     multiple
+                    accept=".txt,.csv,.json,.md,.xml,.html,.htm,.log,.yaml,.yml,.pdf"
                     onChange={(e) => handleFileUpload(e, dept.id)}
                     style={{ display: 'none' }}
                   />
@@ -1239,6 +1363,9 @@ export default function Knowledge({
             }}>
               <p style={{ color: '#94A3B8', fontSize: '13px', margin: 0 }}>
                 <strong style={{ color: '#E2E8F0' }}>Tip:</strong> Make sure your document is shared as "Anyone with the link" or published to web. The document will sync automatically every 5 minutes.
+              </p>
+              <p style={{ color: '#10B981', fontSize: '12px', margin: '8px 0 0 0' }}>
+                ✓ Connected docs provide full data access (up to 100,000 characters)
               </p>
             </div>
 
