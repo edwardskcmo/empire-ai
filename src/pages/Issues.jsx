@@ -43,6 +43,14 @@ export default function Issues({
     return true;
   });
 
+  // Clear all issues
+  const handleClearAll = () => {
+    if (window.confirm('⚠️ DELETE ALL ISSUES?\n\nThis will permanently remove ALL issues (active and archived).\n\nThis cannot be undone!')) {
+      setIssues([]);
+      logActivity('Cleared all issues', 'issue');
+    }
+  };
+
   // Add issue
   const handleAddIssue = () => {
     if (!newIssue.title.trim()) return;
@@ -195,6 +203,27 @@ export default function Issues({
           </p>
         </div>
         <div style={{ display: 'flex', gap: '12px' }}>
+          {/* Clear All Button */}
+          {issues.length > 0 && (
+            <button
+              onClick={handleClearAll}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                background: 'rgba(239, 68, 68, 0.1)',
+                border: '1px solid rgba(239, 68, 68, 0.3)',
+                borderRadius: '8px',
+                padding: '10px 16px',
+                color: '#EF4444',
+                cursor: 'pointer',
+                fontSize: '14px'
+              }}
+            >
+              <Trash2 size={16} />
+              Clear All
+            </button>
+          )}
           <button
             onClick={() => setShowArchive(!showArchive)}
             style={{
